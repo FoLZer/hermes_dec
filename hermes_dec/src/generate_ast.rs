@@ -1,0 +1,6694 @@
+use petgraph::{
+    graph::EdgeReference,
+    stable_graph::NodeIndex,
+    visit::{Dfs, DfsPostOrder, EdgeRef, VisitMap},
+    Graph,
+};
+use swc_common::DUMMY_SP;
+use swc_ecma_ast::*;
+
+use crate::{
+    bytecode::v93::Instruction,
+    hermes_file_reader::{BytecodeFile, InstructionInfo},
+};
+
+pub fn generate_ast(
+    f: &BytecodeFile,
+    cfg: &Graph<Vec<usize>, bool>,
+    instructions: &[InstructionInfo<Instruction>],
+    node: NodeIndex,
+    is_do_while_first_block: bool,
+    while_cond_block: Option<NodeIndex>,
+    do_while_cond_block: Option<NodeIndex>,
+) -> Vec<Stmt> {
+    //println!("{:?}", node);
+    let mut stmts = Vec::new();
+
+    if while_cond_block.is_some() && while_cond_block.unwrap() == node {
+        return vec![Stmt::Continue(ContinueStmt {
+            span: DUMMY_SP,
+            label: None,
+        })];
+    }
+
+    for index in cfg.node_weight(node).unwrap() {
+        match &instructions[*index].instruction {
+            Instruction::Mov { dst_reg, src_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{src_reg}").as_str().into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::LoadParam {
+                dst_reg,
+                param_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident::new(
+                        format!("r{dst_reg}").as_str().into(),
+                        DUMMY_SP,
+                    )))),
+                    right: Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident::new("arguments".into(), DUMMY_SP))),
+                        prop: MemberProp::Computed(ComputedPropName {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Ident(Ident::new(
+                                param_index.to_string().as_str().into(),
+                                DUMMY_SP,
+                            ))),
+                        }),
+                    })),
+                })),
+            })),
+            Instruction::LoadConstNull { dst_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident::new(
+                        format!("r{dst_reg}").as_str().into(),
+                        DUMMY_SP,
+                    )))),
+                    right: Box::new(Expr::Lit(Lit::Null(Null { span: DUMMY_SP }))),
+                })),
+            })),
+            Instruction::LoadConstUndefined { dst_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident::new(
+                        format!("r{dst_reg}").as_str().into(),
+                        DUMMY_SP,
+                    )))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: "undefined".into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::Call1 {
+                dst_reg,
+                closure_reg,
+                argument_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Call(CallExpr {
+                        span: DUMMY_SP,
+                        callee: Callee::Expr(Box::new(Expr::Call(CallExpr {
+                            span: DUMMY_SP,
+                            callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                                span: DUMMY_SP,
+                                obj: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{closure_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                prop: MemberProp::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: "bind".into(),
+                                    optional: false,
+                                }),
+                            }))),
+                            args: vec![ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{argument_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            }],
+                            type_args: None,
+                        }))),
+                        args: vec![],
+                        type_args: None,
+                    })),
+                })),
+            })),
+            Instruction::Call2 {
+                dst_reg,
+                closure_reg,
+                argument1_reg,
+                argument2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Call(CallExpr {
+                        span: DUMMY_SP,
+                        callee: Callee::Expr(Box::new(Expr::Call(CallExpr {
+                            span: DUMMY_SP,
+                            callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                                span: DUMMY_SP,
+                                obj: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{closure_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                prop: MemberProp::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: "bind".into(),
+                                    optional: false,
+                                }),
+                            }))),
+                            args: vec![ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{argument1_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            }],
+                            type_args: None,
+                        }))),
+                        args: vec![ExprOrSpread {
+                            spread: None,
+                            expr: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{argument2_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                        }],
+                        type_args: None,
+                    })),
+                })),
+            })),
+            Instruction::Call3 {
+                dst_reg,
+                closure_reg,
+                argument1_reg,
+                argument2_reg,
+                argument3_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Call(CallExpr {
+                        span: DUMMY_SP,
+                        callee: Callee::Expr(Box::new(Expr::Call(CallExpr {
+                            span: DUMMY_SP,
+                            callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                                span: DUMMY_SP,
+                                obj: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{closure_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                prop: MemberProp::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: "bind".into(),
+                                    optional: false,
+                                }),
+                            }))),
+                            args: vec![ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{argument1_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            }],
+                            type_args: None,
+                        }))),
+                        args: vec![
+                            ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{argument2_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            },
+                            ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{argument3_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            },
+                        ],
+                        type_args: None,
+                    })),
+                })),
+            })),
+            Instruction::Call4 {
+                dst_reg,
+                closure_reg,
+                argument1_reg,
+                argument2_reg,
+                argument3_reg,
+                argument4_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Call(CallExpr {
+                        span: DUMMY_SP,
+                        callee: Callee::Expr(Box::new(Expr::Call(CallExpr {
+                            span: DUMMY_SP,
+                            callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                                span: DUMMY_SP,
+                                obj: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{closure_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                prop: MemberProp::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: "bind".into(),
+                                    optional: false,
+                                }),
+                            }))),
+                            args: vec![ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{argument1_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            }],
+                            type_args: None,
+                        }))),
+                        args: vec![
+                            ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{argument2_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            },
+                            ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{argument3_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            },
+                            ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{argument4_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            },
+                        ],
+                        type_args: None,
+                    })),
+                })),
+            })),
+            Instruction::GetByIdShort {
+                dst_reg,
+                obj_reg,
+                string_table_index,
+                ..
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: f
+                                .get_string(*string_table_index as u32)
+                                .unwrap()
+                                .as_str()
+                                .into(),
+                            optional: false,
+                        }),
+                    })),
+                })),
+            })),
+            Instruction::GetById {
+                dst_reg,
+                obj_reg,
+                string_table_index,
+                ..
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: f
+                                .get_string(*string_table_index as u32)
+                                .unwrap()
+                                .as_str()
+                                .into(),
+                            optional: false,
+                        }),
+                    })),
+                })),
+            })),
+            Instruction::PutById {
+                dst_obj_reg,
+                value_reg,
+                string_table_index,
+                ..
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{dst_obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: f
+                                .get_string(*string_table_index as u32)
+                                .unwrap()
+                                .as_str()
+                                .into(),
+                            optional: false,
+                        }),
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{value_reg}").as_str().into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::LoadConstString {
+                dst_reg,
+                string_table_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Lit(Lit::Str(Str {
+                        span: DUMMY_SP,
+                        value: f
+                            .get_string(*string_table_index as u32)
+                            .unwrap_or("".to_string())
+                            .as_str()
+                            .into(),
+                        raw: None,
+                    }))),
+                })),
+            })),
+            Instruction::LoadConstUInt8 { dst_reg, value } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Lit(Lit::Num(Number {
+                        span: DUMMY_SP,
+                        value: *value as f64,
+                        raw: None,
+                    }))),
+                })),
+            })),
+            Instruction::LoadConstZero { dst_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Lit(Lit::Num(Number {
+                        span: DUMMY_SP,
+                        value: 0.0,
+                        raw: None,
+                    }))),
+                })),
+            })),
+            Instruction::LoadConstFalse { dst_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Lit(Lit::Bool(Bool {
+                        span: DUMMY_SP,
+                        value: false,
+                    }))),
+                })),
+            })),
+            Instruction::LoadConstTrue { dst_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Lit(Lit::Bool(Bool {
+                        span: DUMMY_SP,
+                        value: false,
+                    }))),
+                })),
+            })),
+            Instruction::BitAnd {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: if dst_reg == arg1_reg {
+                        AssignOp::BitAndAssign
+                    } else {
+                        AssignOp::Assign
+                    },
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(if dst_reg == arg1_reg {
+                        Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })
+                    } else {
+                        Expr::Bin(BinExpr {
+                            span: DUMMY_SP,
+                            op: BinaryOp::BitAnd,
+                            left: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{arg1_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                            right: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{arg2_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                        })
+                    }),
+                })),
+            })),
+            Instruction::BitOr {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: if dst_reg == arg1_reg {
+                        AssignOp::BitOrAssign
+                    } else {
+                        AssignOp::Assign
+                    },
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(if dst_reg == arg1_reg {
+                        Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })
+                    } else {
+                        Expr::Bin(BinExpr {
+                            span: DUMMY_SP,
+                            op: BinaryOp::BitOr,
+                            left: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{arg1_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                            right: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{arg2_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                        })
+                    }),
+                })),
+            })),
+            Instruction::StrictNeq {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::NotEqEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::TypeOf { dst_reg, src_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::TypeOf,
+                        arg: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{src_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::Ret { value_reg } => stmts.push(Stmt::Return(ReturnStmt {
+                span: DUMMY_SP,
+                arg: Some(Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{value_reg}").as_str().into(),
+                    optional: false,
+                }))),
+            })),
+            Instruction::GetEnvironment {
+                dst_reg,
+                num_environments,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Call(CallExpr {
+                        span: DUMMY_SP,
+                        callee: Callee::Expr(Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: "get_environment".into(),
+                            optional: false,
+                        }))),
+                        args: vec![ExprOrSpread {
+                            spread: None,
+                            expr: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{num_environments}").as_str().into(),
+                                optional: false,
+                            })),
+                        }],
+                        type_args: None,
+                    })),
+                })),
+            })),
+            Instruction::LoadFromEnvironment {
+                dst_reg,
+                env_reg,
+                env_slot_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Call(CallExpr {
+                        span: DUMMY_SP,
+                        callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                            span: DUMMY_SP,
+                            obj: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{env_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                            prop: MemberProp::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: "get".into(),
+                                optional: false,
+                            }),
+                        }))),
+                        args: vec![ExprOrSpread {
+                            spread: None,
+                            expr: Box::new(Expr::Lit(Lit::Num(Number {
+                                span: DUMMY_SP,
+                                value: *env_slot_index as f64,
+                                raw: None,
+                            }))),
+                        }],
+                        type_args: None,
+                    })),
+                })),
+            })),
+            Instruction::LoadFromEnvironmentL {
+                dst_reg,
+                env_reg,
+                env_slot_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Call(CallExpr {
+                        span: DUMMY_SP,
+                        callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                            span: DUMMY_SP,
+                            obj: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{env_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                            prop: MemberProp::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: "get".into(),
+                                optional: false,
+                            }),
+                        }))),
+                        args: vec![ExprOrSpread {
+                            spread: None,
+                            expr: Box::new(Expr::Lit(Lit::Num(Number {
+                                span: DUMMY_SP,
+                                value: *env_slot_index as f64,
+                                raw: None,
+                            }))),
+                        }],
+                        type_args: None,
+                    })),
+                })),
+            })),
+            Instruction::Unreachable => (),
+            Instruction::NewObjectWithBuffer {
+                dst_reg,
+                size_hint: _,
+                static_elements_num: _,
+                object_key_buffer_index: _,
+                object_value_buffer_index: _,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Object(ObjectLit {
+                        span: DUMMY_SP,
+                        props: Vec::new(),
+                    })),
+                })),
+            })),
+            Instruction::NewObjectWithBufferLong {
+                dst_reg,
+                preallocation_size_hint: _,
+                static_elements_num: _,
+                object_key_buffer_index: _,
+                object_value_buffer_index: _,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Object(ObjectLit {
+                        span: DUMMY_SP,
+                        props: Vec::new(),
+                    })),
+                })),
+            })),
+            Instruction::NewObject { dst_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Object(ObjectLit {
+                        span: DUMMY_SP,
+                        props: Vec::new(),
+                    })),
+                })),
+            })),
+            Instruction::NewObjectWithParent {
+                dst_reg,
+                parent_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Call(CallExpr {
+                        span: DUMMY_SP,
+                        callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                            span: DUMMY_SP,
+                            obj: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: "Object".into(),
+                                optional: false,
+                            })),
+                            prop: MemberProp::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: "create".into(),
+                                optional: false,
+                            }),
+                        }))),
+                        args: vec![ExprOrSpread {
+                            spread: None,
+                            expr: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{parent_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                        }],
+                        type_args: None,
+                    })),
+                })),
+            })),
+            Instruction::NewArrayWithBuffer {
+                dst_reg,
+                preallocation_size_hint: _,
+                static_elements_num: _,
+                array_buffer_table_index: _,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Array(ArrayLit {
+                        span: DUMMY_SP,
+                        elems: Vec::new(),
+                    })),
+                })),
+            })),
+            Instruction::NewArrayWithBufferLong {
+                dst_reg,
+                preallocation_size_hint: _,
+                static_elements_num: _,
+                array_buffer_table_index: _,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Array(ArrayLit {
+                        span: DUMMY_SP,
+                        elems: Vec::new(),
+                    })),
+                })),
+            })),
+            Instruction::NewArray { dst_reg, size: _ } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Array(ArrayLit {
+                        span: DUMMY_SP,
+                        elems: Vec::new(),
+                    })),
+                })),
+            })),
+            Instruction::MovLong { dst_reg, src_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{src_reg}").as_str().into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::Negate { dst_reg, src_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Minus,
+                        arg: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{src_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::Not { dst_reg, src_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{src_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::BitNot { dst_reg, src_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Tilde,
+                        arg: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{src_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::Eq {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::EqEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::StrictEq {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::EqEqEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::Neq {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::NotEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::Less {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Lt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::LessEq {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::LtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::Greater {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Gt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::GreaterEq {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::GtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::Add {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Add,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::AddN {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Add,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::Mul {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Mul,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::MulN {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Mul,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::Div {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Div,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::DivN {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Div,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::Mod {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Mod,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::Sub {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Sub,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::SubN {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Sub,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::LShift {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::LShift,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::RShift {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::RShift,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::URshift {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::ZeroFillRShift,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::BitXor {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::BitXor,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::Inc { dst_reg, arg_reg } => {
+                if *dst_reg == *arg_reg {
+                    stmts.push(Stmt::Expr(ExprStmt {
+                        span: DUMMY_SP,
+                        expr: Box::new(Expr::Update(UpdateExpr {
+                            span: DUMMY_SP,
+                            op: UpdateOp::PlusPlus,
+                            prefix: false,
+                            arg: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{arg_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                        })),
+                    }))
+                } else {
+                    stmts.push(Stmt::Expr(ExprStmt {
+                        span: DUMMY_SP,
+                        expr: Box::new(Expr::Assign(AssignExpr {
+                            span: DUMMY_SP,
+                            op: AssignOp::Assign,
+                            left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{dst_reg}").as_str().into(),
+                                optional: false,
+                            }))),
+                            right: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::Add,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Lit(Lit::Num(Number {
+                                    span: DUMMY_SP,
+                                    value: 1.0,
+                                    raw: None,
+                                }))),
+                            })),
+                        })),
+                    }))
+                }
+            }
+            Instruction::Dec { dst_reg, arg_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Update(UpdateExpr {
+                        span: DUMMY_SP,
+                        op: UpdateOp::MinusMinus,
+                        prefix: false,
+                        arg: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::InstanceOf {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::InstanceOf,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::IsIn {
+                dst_reg,
+                arg1_reg,
+                arg2_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::In,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::StoreToEnvironment {
+                env_reg,
+                env_slot_index,
+                value_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Call(CallExpr {
+                    span: DUMMY_SP,
+                    callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{env_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: "store".into(),
+                            optional: false,
+                        }),
+                    }))),
+                    args: vec![
+                        ExprOrSpread {
+                            spread: None,
+                            expr: Box::new(Expr::Lit(Lit::Num(Number {
+                                span: DUMMY_SP,
+                                value: *env_slot_index as f64,
+                                raw: None,
+                            }))),
+                        },
+                        ExprOrSpread {
+                            spread: None,
+                            expr: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{value_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                        },
+                    ],
+                    type_args: None,
+                })),
+            })),
+            Instruction::StoreToEnvironmentL {
+                env_reg,
+                env_slot_index,
+                value_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Call(CallExpr {
+                    span: DUMMY_SP,
+                    callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{env_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: "store".into(),
+                            optional: false,
+                        }),
+                    }))),
+                    args: vec![
+                        ExprOrSpread {
+                            spread: None,
+                            expr: Box::new(Expr::Lit(Lit::Num(Number {
+                                span: DUMMY_SP,
+                                value: *env_slot_index as f64,
+                                raw: None,
+                            }))),
+                        },
+                        ExprOrSpread {
+                            spread: None,
+                            expr: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{value_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                        },
+                    ],
+                    type_args: None,
+                })),
+            })),
+            Instruction::StoreNPToEnvironment {
+                env_reg,
+                env_slot_index,
+                value_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Call(CallExpr {
+                    span: DUMMY_SP,
+                    callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{env_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: "store".into(),
+                            optional: false,
+                        }),
+                    }))),
+                    args: vec![
+                        ExprOrSpread {
+                            spread: None,
+                            expr: Box::new(Expr::Lit(Lit::Num(Number {
+                                span: DUMMY_SP,
+                                value: *env_slot_index as f64,
+                                raw: None,
+                            }))),
+                        },
+                        ExprOrSpread {
+                            spread: None,
+                            expr: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{value_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                        },
+                    ],
+                    type_args: None,
+                })),
+            })),
+            Instruction::StoreNPToEnvironmentL {
+                env_reg,
+                env_slot_index,
+                value_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Call(CallExpr {
+                    span: DUMMY_SP,
+                    callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{env_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: "store".into(),
+                            optional: false,
+                        }),
+                    }))),
+                    args: vec![
+                        ExprOrSpread {
+                            spread: None,
+                            expr: Box::new(Expr::Lit(Lit::Num(Number {
+                                span: DUMMY_SP,
+                                value: *env_slot_index as f64,
+                                raw: None,
+                            }))),
+                        },
+                        ExprOrSpread {
+                            spread: None,
+                            expr: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{value_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                        },
+                    ],
+                    type_args: None,
+                })),
+            })),
+            Instruction::GetGlobalObject { dst_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: "globalThis".into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::GetNewTarget { dst_reg: _ } => todo!(),
+            Instruction::CreateEnvironment { dst_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Call(CallExpr {
+                        span: DUMMY_SP,
+                        callee: Callee::Expr(Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: "create_environment".into(),
+                            optional: false,
+                        }))),
+                        args: vec![],
+                        type_args: None,
+                    })),
+                })),
+            })),
+            Instruction::DeclareGlobalVar { string_table_index } => {
+                stmts.push(Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: Box::new(Expr::Assign(AssignExpr {
+                        span: DUMMY_SP,
+                        op: AssignOp::Assign,
+                        left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
+                            span: DUMMY_SP,
+                            obj: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: "globalThis".into(),
+                                optional: false,
+                            })),
+                            prop: MemberProp::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: f.get_string(*string_table_index).unwrap().as_str().into(),
+                                optional: false,
+                            }),
+                        }))),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: "undefined".into(),
+                            optional: false,
+                        })),
+                    })),
+                }))
+            }
+            Instruction::GetByIdLong {
+                dst_reg,
+                obj_reg,
+                cache_index: _,
+                string_table_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: f.get_string(*string_table_index).unwrap().as_str().into(),
+                            optional: false,
+                        }),
+                    })),
+                })),
+            })),
+            Instruction::TryGetById {
+                dst_reg,
+                obj_reg,
+                cache_index: _,
+                string_table_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: f
+                                .get_string(*string_table_index as u32)
+                                .unwrap()
+                                .as_str()
+                                .into(),
+                            optional: false,
+                        }),
+                    })),
+                })),
+            })),
+            Instruction::TryGetByIdLong {
+                dst_reg,
+                obj_reg,
+                cache_index: _,
+                string_table_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: f.get_string(*string_table_index).unwrap().as_str().into(),
+                            optional: false,
+                        }),
+                    })),
+                })),
+            })),
+            Instruction::PutByIdLong {
+                dst_obj_reg,
+                value_reg,
+                cache_index: _,
+                string_table_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{dst_obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: f.get_string(*string_table_index).unwrap().as_str().into(),
+                            optional: false,
+                        }),
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{value_reg}").as_str().into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::TryPutById {
+                dst_obj_reg,
+                value_reg,
+                cache_index: _,
+                string_table_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{dst_obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: f
+                                .get_string(*string_table_index as u32)
+                                .unwrap()
+                                .as_str()
+                                .into(),
+                            optional: false,
+                        }),
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{value_reg}").as_str().into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::TryPutByIdLong {
+                dst_obj_reg,
+                value_reg,
+                cache_index: _,
+                string_table_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{dst_obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: f.get_string(*string_table_index).unwrap().as_str().into(),
+                            optional: false,
+                        }),
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{value_reg}").as_str().into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            //Todo: probably via defineProperty
+            Instruction::PutNewOwnByIdShort {
+                dst_obj_reg,
+                value_reg,
+                string_table_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{dst_obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: f
+                                .get_string(*string_table_index as u32)
+                                .unwrap()
+                                .as_str()
+                                .into(),
+                            optional: false,
+                        }),
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{value_reg}").as_str().into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::PutNewOwnById {
+                dst_obj_reg,
+                value_reg,
+                string_table_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{dst_obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: f
+                                .get_string(*string_table_index as u32)
+                                .unwrap()
+                                .as_str()
+                                .into(),
+                            optional: false,
+                        }),
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{value_reg}").as_str().into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::PutNewOwnByIdLong {
+                dst_obj_reg,
+                value_reg,
+                string_table_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{dst_obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: f.get_string(*string_table_index).unwrap().as_str().into(),
+                            optional: false,
+                        }),
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{value_reg}").as_str().into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::PutNewOwnNEById {
+                dst_obj_reg: _,
+                value_reg: _,
+                string_table_index: _,
+            } => todo!(),
+            Instruction::PutNewOwnNEByIdLong {
+                dst_obj_reg: _,
+                value_reg: _,
+                string_table_index: _,
+            } => todo!(),
+            Instruction::PutOwnByIndex {
+                dst_obj_reg,
+                value_reg,
+                index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{dst_obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Computed(ComputedPropName {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Lit(Lit::Num(Number {
+                                span: DUMMY_SP,
+                                value: *index as f64,
+                                raw: None,
+                            }))),
+                        }),
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{value_reg}").as_str().into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::PutOwnByIndexL {
+                dst_obj_reg: _,
+                value_reg: _,
+                index: _,
+            } => todo!(),
+            Instruction::PutOwnByVal {
+                dst_obj_reg: _,
+                value_reg: _,
+                property_name_reg: _,
+                enumerable: _,
+            } => todo!(),
+            Instruction::DelById {
+                dst_reg,
+                obj_reg,
+                string_table_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Delete,
+                        arg: Box::new(Expr::Member(MemberExpr {
+                            span: DUMMY_SP,
+                            obj: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{obj_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                            prop: MemberProp::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: f
+                                    .get_string(*string_table_index as u32)
+                                    .unwrap()
+                                    .as_str()
+                                    .into(),
+                                optional: false,
+                            }),
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::DelByIdLong {
+                dst_reg,
+                obj_reg,
+                string_table_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Delete,
+                        arg: Box::new(Expr::Member(MemberExpr {
+                            span: DUMMY_SP,
+                            obj: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{obj_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                            prop: MemberProp::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: f.get_string(*string_table_index).unwrap().as_str().into(),
+                                optional: false,
+                            }),
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::GetByVal {
+                dst_reg,
+                obj_reg,
+                index_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Computed(ComputedPropName {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{index_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                        }),
+                    })),
+                })),
+            })),
+            Instruction::PutByVal {
+                dst_obj_reg,
+                index_reg,
+                value_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{dst_obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Computed(ComputedPropName {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{index_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                        }),
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{value_reg}").as_str().into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::DelByVal {
+                dst_reg,
+                obj_reg,
+                index_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Delete,
+                        arg: Box::new(Expr::Member(MemberExpr {
+                            span: DUMMY_SP,
+                            obj: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{obj_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                            prop: MemberProp::Computed(ComputedPropName {
+                                span: DUMMY_SP,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{index_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            }),
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::PutOwnGetterSetterByVal {
+                obj_reg: _,
+                property_name_reg: _,
+                getter_closure_reg: _,
+                setter_closure_reg: _,
+                enumerable: _,
+            } => todo!(),
+            Instruction::GetPNameList {
+                dst_reg,
+                obj_reg,
+                iterating_index_reg,
+                property_list_size_reg,
+            } => {
+                stmts.push(Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: Box::new(Expr::Assign(AssignExpr {
+                        span: DUMMY_SP,
+                        op: AssignOp::Assign,
+                        left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{iterating_index_reg}").as_str().into(),
+                            optional: false,
+                        }))),
+                        right: Box::new(Expr::Lit(Lit::Num(Number {
+                            span: DUMMY_SP,
+                            value: 0.0,
+                            raw: None,
+                        }))),
+                    })),
+                }));
+                stmts.push(Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: Box::new(Expr::Assign(AssignExpr {
+                        span: DUMMY_SP,
+                        op: AssignOp::Assign,
+                        left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{dst_reg}").as_str().into(),
+                            optional: false,
+                        }))),
+                        right: Box::new(Expr::Call(CallExpr {
+                            span: DUMMY_SP,
+                            callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                                span: DUMMY_SP,
+                                obj: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: "Object".into(),
+                                    optional: false,
+                                })),
+                                prop: MemberProp::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: "keys".into(),
+                                    optional: false,
+                                }),
+                            }))),
+                            args: vec![ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{obj_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            }],
+                            type_args: None,
+                        })),
+                    })),
+                }));
+                stmts.push(Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: Box::new(Expr::Assign(AssignExpr {
+                        span: DUMMY_SP,
+                        op: AssignOp::Assign,
+                        left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{property_list_size_reg}").as_str().into(),
+                            optional: false,
+                        }))),
+                        right: Box::new(Expr::Member(MemberExpr {
+                            span: DUMMY_SP,
+                            obj: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{dst_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                            prop: MemberProp::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: "length".into(),
+                                optional: false,
+                            }),
+                        })),
+                    })),
+                }));
+            }
+            Instruction::GetNextPName {
+                dst_reg,
+                properties_array_reg,
+                obj_reg: _,
+                iterating_index_reg,
+                property_list_size_reg: _,
+            } => {
+                stmts.push(Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: Box::new(Expr::Assign(AssignExpr {
+                        span: DUMMY_SP,
+                        op: AssignOp::Assign,
+                        left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{dst_reg}").as_str().into(),
+                            optional: false,
+                        }))),
+                        right: Box::new(Expr::Member(MemberExpr {
+                            span: DUMMY_SP,
+                            obj: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{properties_array_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                            prop: MemberProp::Computed(ComputedPropName {
+                                span: DUMMY_SP,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{iterating_index_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            }),
+                        })),
+                    })),
+                }));
+                stmts.push(Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: Box::new(Expr::Update(UpdateExpr {
+                        span: DUMMY_SP,
+                        op: UpdateOp::PlusPlus,
+                        prefix: false,
+                        arg: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{iterating_index_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                }));
+            }
+            Instruction::Call {
+                dst_reg,
+                closure_reg,
+                arguments_len,
+            } => {
+                let mut arguments = Vec::new();
+                for s in &stmts[stmts.len() - *arguments_len as usize..stmts.len()] {
+                    if let Stmt::Expr(s) = s {
+                        if let Expr::Assign(s) = &*s.expr {
+                            arguments.push(ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(s.left.as_ident().unwrap().clone())),
+                            });
+                        }
+                    }
+                }
+                stmts.push(Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: Box::new(Expr::Assign(AssignExpr {
+                        span: DUMMY_SP,
+                        op: AssignOp::Assign,
+                        left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{dst_reg}").as_str().into(),
+                            optional: false,
+                        }))),
+                        right: Box::new(Expr::Call(CallExpr {
+                            span: DUMMY_SP,
+                            callee: Callee::Expr(Box::new(Expr::Call(CallExpr {
+                                span: DUMMY_SP,
+                                callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                                    span: DUMMY_SP,
+                                    obj: Box::new(Expr::Ident(Ident {
+                                        span: DUMMY_SP,
+                                        sym: format!("r{closure_reg}").as_str().into(),
+                                        optional: false,
+                                    })),
+                                    prop: MemberProp::Ident(Ident {
+                                        span: DUMMY_SP,
+                                        sym: "bind".into(),
+                                        optional: false,
+                                    }),
+                                }))),
+                                args: vec![arguments[0].clone()],
+                                type_args: None,
+                            }))),
+                            args: arguments[1..].to_vec(),
+                            type_args: None,
+                        })),
+                    })),
+                }));
+            }
+            Instruction::Construct {
+                dst_reg,
+                closure_reg,
+                arguments_len,
+            } => {
+                let mut arguments = Vec::new();
+                for s in &stmts[stmts.len() - *arguments_len as usize..stmts.len()] {
+                    if let Stmt::Expr(s) = s {
+                        if let Expr::Assign(s) = &*s.expr {
+                            arguments.push(ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(s.left.as_ident().unwrap().clone())),
+                            });
+                        }
+                    }
+                }
+                stmts.push(Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: Box::new(Expr::Assign(AssignExpr {
+                        span: DUMMY_SP,
+                        op: AssignOp::Assign,
+                        left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{dst_reg}").as_str().into(),
+                            optional: false,
+                        }))),
+                        right: Box::new(Expr::New(NewExpr {
+                            span: DUMMY_SP,
+                            callee: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{closure_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                            args: Some(arguments),
+                            type_args: None,
+                        })),
+                    })),
+                }))
+            }
+            Instruction::CallDirect {
+                dst_reg: _,
+                arguments_len: _,
+                function_table_index: _,
+            } => todo!(),
+            Instruction::CallLong {
+                dst_reg: _,
+                closure_reg: _,
+                arguments_len: _,
+            } => todo!(),
+            Instruction::ConstructLong {
+                dst_reg: _,
+                closure_reg: _,
+                arguments_len: _,
+            } => todo!(),
+            Instruction::CallDirectLongIndex {
+                dst_reg: _,
+                arguments_len: _,
+                function_table_index: _,
+            } => todo!(),
+            Instruction::CallBuiltin {
+                dst_reg: _,
+                builtin_number: _,
+                arguments_len: _,
+            } => todo!(),
+            Instruction::CallBuiltinLong {
+                dst_reg: _,
+                builtin_number: _,
+                arguments_len: _,
+            } => todo!(),
+            Instruction::GetBuiltinClosure {
+                dst_reg: _,
+                builtin_number: _,
+            } => todo!(),
+            Instruction::Catch { dst_reg: _ } => todo!(),
+            Instruction::DirectEval {
+                dst_reg: _,
+                value_reg: _,
+            } => todo!(),
+            Instruction::Throw { value_reg } => stmts.push(Stmt::Throw(ThrowStmt {
+                span: DUMMY_SP,
+                arg: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+            Instruction::ThrowIfEmpty {
+                dst_reg: _,
+                checked_value_reg: _,
+            } => todo!(),
+            Instruction::Debugger => todo!(),
+            Instruction::AsyncBreakCheck => todo!(),
+            Instruction::ProfilePoint {
+                function_local_profile_point_index: _,
+            } => todo!(),
+            Instruction::CreateClosure {
+                dst_reg,
+                current_environment_reg: _,
+                function_table_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("f{function_table_index}").as_str().into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::CreateClosureLongIndex {
+                dst_reg: _,
+                current_environment_reg: _,
+                function_table_index: _,
+            } => todo!(),
+            Instruction::CreateGeneratorClosure {
+                dst_reg: _,
+                current_environment_reg: _,
+                function_table_index: _,
+            } => todo!(),
+            Instruction::CreateGeneratorClosureLongIndex {
+                dst_reg: _,
+                current_environment_reg: _,
+                function_table_index: _,
+            } => todo!(),
+            Instruction::CreateAsyncClosure {
+                dst_reg: _,
+                current_environment_reg: _,
+                function_table_index: _,
+            } => todo!(),
+            Instruction::CreateAsyncClosureLongIndex {
+                dst_reg: _,
+                current_environment_reg: _,
+                function_table_index: _,
+            } => todo!(),
+            Instruction::CreateThis {
+                dst_reg,
+                prototype_reg: _,
+                constructor_closure_reg: _,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: "this".into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::SelectObject {
+                dst_reg,
+                this_obj_reg,
+                return_value_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Cond(CondExpr {
+                        span: DUMMY_SP,
+                        test: Box::new(Expr::Bin(BinExpr {
+                            span: DUMMY_SP,
+                            op: BinaryOp::InstanceOf,
+                            left: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{return_value_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                            right: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: "Object".into(),
+                                optional: false,
+                            })),
+                        })),
+                        cons: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{return_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        alt: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{this_obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
+            Instruction::LoadParamLong {
+                dst_reg: _,
+                param_index: _,
+            } => todo!(),
+            Instruction::LoadConstInt { dst_reg, value } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Lit(Lit::Num(Number {
+                        span: DUMMY_SP,
+                        value: *value as f64,
+                        raw: None,
+                    }))),
+                })),
+            })),
+            Instruction::LoadConstDouble { dst_reg, value } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Lit(Lit::Num(Number {
+                        span: DUMMY_SP,
+                        value: *value,
+                        raw: None,
+                    }))),
+                })),
+            })),
+            Instruction::LoadConstBigInt {
+                dst_reg: _,
+                bigint_table_index: _,
+            } =>
+            /*stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Lit(Lit::BigInt(BigInt {
+                        span: DUMMY_SP,
+                        value: Box::new(f.get_bigint(*bigint_table_index)),
+                        raw: None
+                    }))),
+                })),
+            }))*/
+            {
+                todo!()
+            }
+            Instruction::LoadConstBigIntLongIndex {
+                dst_reg: _,
+                bigint_table_index: _,
+            } => todo!(),
+            Instruction::LoadConstStringLongIndex {
+                dst_reg: _,
+                string_table_index: _,
+            } => todo!(),
+            Instruction::LoadConstEmpty { dst_reg: _ } => todo!(),
+            Instruction::CoerceThisNS {
+                dst_reg,
+                this_value_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{this_value_reg}").as_str().into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::LoadThisNS { dst_this_obj_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_this_obj_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: "this".into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::ToNumber {
+                dst_reg: _,
+                value_reg: _,
+            } => todo!(),
+            Instruction::ToNumeric {
+                dst_reg: _,
+                value_reg: _,
+            } => todo!(),
+            Instruction::ToInt32 {
+                dst_reg: _,
+                value_reg: _,
+            } => todo!(),
+            Instruction::AddEmptyString {
+                dst_reg: _,
+                value_reg: _,
+            } => todo!(),
+            Instruction::GetArgumentsPropByVal {
+                dst_reg,
+                index_reg,
+                lazy_loaded_reg: _,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: "arguments".into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Computed(ComputedPropName {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{index_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                        }),
+                    })),
+                })),
+            })),
+            Instruction::GetArgumentsLength {
+                dst_reg,
+                lazy_loaded_reg: _,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: "arguments".into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: "length".into(),
+                            optional: false,
+                        }),
+                    })),
+                })),
+            })),
+            Instruction::ReifyArguments { lazy_loaded_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{lazy_loaded_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: "arguments".into(),
+                        optional: false,
+                    })),
+                })),
+            })),
+            Instruction::CreateRegExp {
+                dst_reg: _,
+                pattern_string_index: _,
+                flags_string_index: _,
+                regexp_table_index: _,
+            } => todo!(),
+            Instruction::SwitchImm {
+                value_reg: _,
+                relative_jump_table_offset: _,
+                relative_default_jump_offset: _,
+                min_value: _,
+                max_value: _,
+            } => todo!(),
+            Instruction::StartGenerator => todo!(),
+            Instruction::ResumeGenerator {
+                dst_result_reg: _,
+                is_return: _,
+            } => todo!(),
+            Instruction::CompleteGenerator => todo!(),
+            Instruction::CreateGenerator {
+                dst_reg: _,
+                current_environment_reg: _,
+                function_table_index: _,
+            } => todo!(),
+            Instruction::CreateGeneratorLongIndex {
+                dst_reg: _,
+                current_environment_reg: _,
+                function_table_index: _,
+            } => todo!(),
+            Instruction::IteratorBegin {
+                dst_reg: _,
+                source_reg: _,
+            } => todo!(),
+            Instruction::IteratorNext {
+                dst_reg: _,
+                iterator_or_index_reg: _,
+                source_reg: _,
+            } => todo!(),
+            Instruction::IteratorClose {
+                iterator_or_index_reg: _,
+                ignore_inner_exception: _,
+            } => todo!(),
+
+            Instruction::Jmp { relative_offset: _ } => (),
+            Instruction::JmpLong { relative_offset: _ } => (),
+            Instruction::JmpTrue {
+                relative_offset: _,
+                check_value_reg: _,
+            } => (),
+            Instruction::JmpTrueLong {
+                relative_offset: _,
+                check_value_reg: _,
+            } => (),
+            Instruction::JmpFalse {
+                relative_offset: _,
+                check_value_reg: _,
+            } => (),
+            Instruction::JmpFalseLong {
+                relative_offset: _,
+                check_value_reg: _,
+            } => (),
+            Instruction::JmpUndefined {
+                relative_offset: _,
+                check_value_reg: _,
+            } => (),
+            Instruction::JmpUndefinedLong {
+                relative_offset: _,
+                check_value_reg: _,
+            } => (),
+            Instruction::SaveGenerator { relative_offset: _ } => todo!(),
+            Instruction::SaveGeneratorLong { relative_offset: _ } => todo!(),
+            Instruction::JLess {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JLessLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotLess {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotLessLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JLessN {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JLessNLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotLessN {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotLessNLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JLessEqual {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JLessEqualLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotLessEqual {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotLessEqualLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JLessEqualN {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JLessEqualNLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotLessEqualN {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotLessEqualNLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JGreater {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JGreaterLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotGreater {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotGreaterLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JGreaterN {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JGreaterNLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotGreaterN {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotGreaterNLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JGreaterEqual {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JGreaterEqualLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotGreaterEqual {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotGreaterEqualLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JGreaterEqualN {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JGreaterEqualNLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotGreaterEqualN {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotGreaterEqualNLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JEqual {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JEqualLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotEqual {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JNotEqualLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JStrictEqual {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JStrictEqualLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JStrictNotEqual {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+            Instruction::JStrictNotEqualLong {
+                relative_offset: _,
+                arg1_value_reg: _,
+                arg2_value_reg: _,
+            } => (),
+
+            Instruction::Add32 {
+                dst_reg: _,
+                arg1_reg: _,
+                arg2_reg: _,
+            } => todo!(),
+            Instruction::Sub32 {
+                dst_reg: _,
+                arg1_reg: _,
+                arg2_reg: _,
+            } => todo!(),
+            Instruction::Mul32 {
+                dst_reg: _,
+                arg1_reg: _,
+                arg2_reg: _,
+            } => todo!(),
+            Instruction::Divi32 {
+                dst_reg: _,
+                arg1_reg: _,
+                arg2_reg: _,
+            } => todo!(),
+            Instruction::Divu32 {
+                dst_reg: _,
+                arg1_reg: _,
+                arg2_reg: _,
+            } => todo!(),
+            Instruction::Loadi8 {
+                dst_reg: _,
+                _unused_reg,
+                heap_index_reg: _,
+            } => todo!(),
+            Instruction::Loadu8 {
+                dst_reg: _,
+                _unused_reg,
+                heap_index_reg: _,
+            } => todo!(),
+            Instruction::Loadi16 {
+                dst_reg: _,
+                _unused_reg,
+                heap_index_reg: _,
+            } => todo!(),
+            Instruction::Loadu16 {
+                dst_reg: _,
+                _unused_reg,
+                heap_index_reg: _,
+            } => todo!(),
+            Instruction::Loadi32 {
+                dst_reg: _,
+                _unused_reg,
+                heap_index_reg: _,
+            } => todo!(),
+            Instruction::Loadu32 {
+                dst_reg: _,
+                _unused_reg,
+                heap_index_reg: _,
+            } => todo!(),
+            Instruction::Store8 {
+                _unused_reg,
+                heap_index_reg: _,
+                value_reg: _,
+            } => todo!(),
+            Instruction::Store16 {
+                _unused_reg,
+                heap_index_reg: _,
+                value_reg: _,
+            } => todo!(),
+            Instruction::Store32 {
+                _unused_reg,
+                heap_index_reg: _,
+                value_reg: _,
+            } => todo!(),
+        }
+    }
+
+    if do_while_cond_block.is_some() && do_while_cond_block.unwrap() == node {
+        return stmts;
+    }
+
+    //println!("{:?} - {:?}", while_cond_block, node);
+
+    let indecies = cfg.node_weight(node).unwrap();
+    let flow_index = indecies.last().unwrap();
+    let incoming_edges = cfg
+        .edges_directed(node, petgraph::Direction::Incoming)
+        .collect::<Vec<EdgeReference<'_, bool>>>();
+    let outgoing_edges = cfg
+        .edges_directed(node, petgraph::Direction::Outgoing)
+        .collect::<Vec<EdgeReference<'_, bool>>>();
+    if !is_do_while_first_block && incoming_edges.len() >= 2 {
+        //either loop or "if target"
+        let edges_from = incoming_edges
+            .iter()
+            .map(|e| e.source())
+            .collect::<Vec<NodeIndex>>();
+        let mut dfs = DfsPostOrder::new(cfg, node);
+        {
+            let mut dfs_a = Dfs::new(cfg, NodeIndex::new(0));
+            dfs_a.discovered.visit(node);
+            while let Some(node) = dfs_a.next(cfg) {
+                dfs.discovered.visit(node);
+                dfs.finished.visit(node);
+            }
+        }
+
+        let mut is_loop = false;
+        let mut possible_loop_condition_index = None;
+        while let Some(node) = dfs.next(cfg) {
+            if edges_from.contains(&node) {
+                is_loop = true;
+                possible_loop_condition_index = Some(node);
+                break;
+            }
+        }
+
+        if is_loop {
+            println!("{is_loop}");
+            let cond_index = cfg
+                .node_weight(possible_loop_condition_index.unwrap())
+                .unwrap()
+                .last()
+                .unwrap();
+            let mut skip_do_while_check = false;
+            if let Instruction::Jmp { .. } = &instructions[*cond_index].instruction {
+                skip_do_while_check = true; //can't be do_while if ends with jmp
+            }
+            println!("{}: {:?}", cond_index, &instructions[*cond_index]);
+            let index = if skip_do_while_check {
+                *flow_index
+            } else {
+                *cond_index
+            };
+
+            let cond = jump_inst_to_test(&instructions[index].instruction);
+            let outgoing_edges = cfg
+                .edges_directed(
+                    possible_loop_condition_index.unwrap(),
+                    petgraph::Direction::Outgoing,
+                )
+                .collect::<Vec<EdgeReference<'_, bool>>>();
+            let (tru, fals) = {
+                let mut tru = None;
+                let mut fals = None;
+                for edge in &outgoing_edges {
+                    if *edge.weight() {
+                        tru = Some(edge);
+                    } else {
+                        fals = Some(edge);
+                    }
+                }
+                (tru.unwrap(), fals.unwrap())
+            };
+            if tru.target() == node {
+                //do..while
+                let body = generate_ast(
+                    f,
+                    cfg,
+                    instructions,
+                    node,
+                    true,
+                    None,
+                    Some(possible_loop_condition_index.unwrap()),
+                );
+                if indecies.len() > 1 {
+                    //add_inside_while(&mut body, &stmts)
+                }
+                stmts.push(Stmt::DoWhile(DoWhileStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Paren(ParenExpr {
+                        span: DUMMY_SP,
+                        expr: Box::new(cond),
+                    })),
+                    body: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: body,
+                    })),
+                }));
+                stmts.append(&mut generate_ast(
+                    f,
+                    cfg,
+                    instructions,
+                    fals.target(),
+                    false,
+                    None,
+                    None,
+                ));
+            } else {
+                //while..do
+                let mut body = generate_ast(
+                    f,
+                    cfg,
+                    instructions,
+                    fals.target(),
+                    false,
+                    Some(node),
+                    do_while_cond_block,
+                );
+                if indecies.len() > 1 {
+                    add_inside_while(&mut body, &stmts)
+                }
+                stmts.push(Stmt::While(WhileStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(cond),
+                        })),
+                    })),
+                    body: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: body,
+                    })),
+                }));
+                stmts.append(&mut generate_ast(
+                    f,
+                    cfg,
+                    instructions,
+                    tru.target(),
+                    false,
+                    None,
+                    do_while_cond_block,
+                ));
+            }
+
+            //println!("a");
+            //println!("{:?} - {:?}", tru.target(), node);
+
+            //if tru.target() == node {
+            //   stmts.append()
+            //} else {
+            //    stmts.append(&mut generate_ast(f, cfg, instructions, tru.target(), None));
+            //}
+            println!("b");
+            return stmts;
+        }
+    }
+    if outgoing_edges.len() == 2 {
+        //not sure about else if
+        //if, can't have more outgoing edges in hermes bytecode
+        let mut is_loop = false;
+        for _edge in &outgoing_edges {
+            //loops:
+            //check if goes up -> continue;
+            //check if goes horizontal -> break;
+            if false {
+                is_loop = true;
+            }
+        }
+        if !is_loop {
+            let (tru, fals) = {
+                let mut tru = None;
+                let mut fals = None;
+                for edge in &outgoing_edges {
+                    if *edge.weight() {
+                        tru = Some(edge);
+                    } else {
+                        fals = Some(edge);
+                    }
+                }
+                (tru.unwrap(), fals.unwrap())
+            };
+            match instructions[*flow_index].instruction {
+                //should be a conditional jump
+                Instruction::JmpTrue {
+                    relative_offset: _,
+                    check_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{check_value_reg}").as_str().into(),
+                        optional: false,
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JmpTrueLong {
+                    relative_offset: _,
+                    check_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{check_value_reg}").as_str().into(),
+                        optional: false,
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JmpFalse {
+                    relative_offset: _,
+                    check_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{check_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JmpFalseLong {
+                    relative_offset: _,
+                    check_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{check_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JmpUndefined {
+                    relative_offset: _,
+                    check_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::EqEqEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{check_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: "undefined".into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JmpUndefinedLong {
+                    relative_offset: _,
+                    check_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::EqEqEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{check_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: "undefined".into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JLess {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Lt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JLessLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Lt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotLess {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::Lt,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            })),
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotLessLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::Lt,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            })),
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JLessN {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Lt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JLessNLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Lt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotLessN {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::Lt,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            })),
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotLessNLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::Lt,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            })),
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JLessEqual {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::LtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JLessEqualLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::LtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotLessEqual {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::LtEq,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            })),
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotLessEqualLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::LtEq,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            })),
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JLessEqualN {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::LtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JLessEqualNLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::LtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotLessEqualN {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::LtEq,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            })),
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotLessEqualNLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::LtEq,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            })),
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JGreater {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Gt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JGreaterLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Gt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotGreater {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::Gt,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            })),
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotGreaterLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::Gt,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            })),
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JGreaterN {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Gt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JGreaterNLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Gt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotGreaterN {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::Gt,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            })),
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotGreaterNLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::Gt,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            })),
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JGreaterEqual {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::GtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JGreaterEqualLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::GtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotGreaterEqual {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::GtEq,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            })),
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotGreaterEqualLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::GtEq,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            })),
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JGreaterEqualN {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::GtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JGreaterEqualNLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::GtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotGreaterEqualN {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::GtEq,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            })),
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotGreaterEqualNLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Unary(UnaryExpr {
+                        span: DUMMY_SP,
+                        op: UnaryOp::Bang,
+                        arg: Box::new(Expr::Paren(ParenExpr {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: BinaryOp::GtEq,
+                                left: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                right: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                            })),
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JEqual {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::EqEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JEqualLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::EqEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotEqual {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::NotEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JNotEqualLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::NotEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JStrictEqual {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::EqEqEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JStrictEqualLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::EqEqEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JStrictNotEqual {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::NotEqEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                Instruction::JStrictNotEqualLong {
+                    relative_offset: _,
+                    arg1_value_reg,
+                    arg2_value_reg,
+                } => stmts.push(Stmt::If(IfStmt {
+                    span: DUMMY_SP,
+                    test: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::NotEqEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                    cons: Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            tru.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    })),
+                    alt: Some(Box::new(Stmt::Block(BlockStmt {
+                        span: DUMMY_SP,
+                        stmts: generate_ast(
+                            f,
+                            cfg,
+                            instructions,
+                            fals.target(),
+                            false,
+                            while_cond_block,
+                            do_while_cond_block,
+                        ),
+                    }))),
+                })),
+                _ => unreachable!(),
+            }
+        }
+    } else if outgoing_edges.len() == 1 {
+        stmts.append(&mut generate_ast(
+            f,
+            cfg,
+            instructions,
+            outgoing_edges[0].target(),
+            false,
+            while_cond_block,
+            do_while_cond_block,
+        ));
+    }
+    stmts
+}
+
+fn jump_inst_to_test(instruction: &Instruction) -> Expr {
+    match instruction {
+        //should be a conditional jump
+        Instruction::JmpTrue {
+            relative_offset: _,
+            check_value_reg,
+        } => Expr::Ident(Ident {
+            span: DUMMY_SP,
+            sym: format!("r{check_value_reg}").as_str().into(),
+            optional: false,
+        }),
+        Instruction::JmpTrueLong {
+            relative_offset: _,
+            check_value_reg,
+        } => Expr::Ident(Ident {
+            span: DUMMY_SP,
+            sym: format!("r{check_value_reg}").as_str().into(),
+            optional: false,
+        }),
+        Instruction::JmpFalse {
+            relative_offset: _,
+            check_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{check_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JmpFalseLong {
+            relative_offset: _,
+            check_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{check_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JmpUndefined {
+            relative_offset: _,
+            check_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::EqEqEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{check_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: "undefined".into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JmpUndefinedLong {
+            relative_offset: _,
+            check_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::EqEqEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{check_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: "undefined".into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JLess {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::Lt,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JLessLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::Lt,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JNotLess {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::Lt,
+                left: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+                right: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+        }),
+        Instruction::JNotLessLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::Lt,
+                left: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+                right: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+        }),
+        Instruction::JLessN {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::Lt,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JLessNLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::Lt,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JNotLessN {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::Lt,
+                left: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+                right: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+        }),
+        Instruction::JNotLessNLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::Lt,
+                left: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+                right: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+        }),
+        Instruction::JLessEqual {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::LtEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JLessEqualLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::LtEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JNotLessEqual {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::LtEq,
+                left: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+                right: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+        }),
+        Instruction::JNotLessEqualLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::LtEq,
+                left: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+                right: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+        }),
+        Instruction::JLessEqualN {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::LtEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JLessEqualNLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::LtEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JNotLessEqualN {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::LtEq,
+                left: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+                right: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+        }),
+        Instruction::JNotLessEqualNLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::LtEq,
+                left: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+                right: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+        }),
+        Instruction::JGreater {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::Gt,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JGreaterLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::Gt,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JNotGreater {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::Gt,
+                left: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+                right: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+        }),
+        Instruction::JNotGreaterLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::Gt,
+                left: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+                right: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+        }),
+        Instruction::JGreaterN {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::Gt,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JGreaterNLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::Gt,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JNotGreaterN {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::Gt,
+                left: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+                right: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+        }),
+        Instruction::JNotGreaterNLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::Gt,
+                left: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+                right: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+        }),
+        Instruction::JGreaterEqual {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::GtEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JGreaterEqualLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::GtEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JNotGreaterEqual {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::GtEq,
+                left: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+                right: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+        }),
+        Instruction::JNotGreaterEqualLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::GtEq,
+                left: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+                right: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+        }),
+        Instruction::JGreaterEqualN {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::GtEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JGreaterEqualNLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::GtEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JNotGreaterEqualN {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::GtEq,
+                left: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+                right: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+        }),
+        Instruction::JNotGreaterEqualNLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Unary(UnaryExpr {
+            span: DUMMY_SP,
+            op: UnaryOp::Bang,
+            arg: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::GtEq,
+                left: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg1_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+                right: Box::new(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: format!("r{arg2_value_reg}").as_str().into(),
+                    optional: false,
+                })),
+            })),
+        }),
+        Instruction::JEqual {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::EqEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JEqualLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::EqEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JNotEqual {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::NotEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JNotEqualLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::NotEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JStrictEqual {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::EqEqEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JStrictEqualLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::EqEqEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JStrictNotEqual {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::NotEqEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        Instruction::JStrictNotEqualLong {
+            relative_offset: _,
+            arg1_value_reg,
+            arg2_value_reg,
+        } => Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::NotEqEq,
+            left: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg1_value_reg}").as_str().into(),
+                optional: false,
+            })),
+            right: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                sym: format!("r{arg2_value_reg}").as_str().into(),
+                optional: false,
+            })),
+        }),
+        _ => panic!("got a non-jump: {instruction:?}"),
+    }
+}
+
+fn add_inside_while(body: &mut Vec<Stmt>, to_add: &Vec<Stmt>) {
+    let mut i = 0;
+    //println!("{}", body.len());
+    while i < body.len() {
+        let stmt = &mut body[i];
+        match stmt {
+            Stmt::Continue(_) => {
+                for i1 in 0..to_add.len() {
+                    body.insert(i + i1, to_add[i1].clone())
+                }
+                i += to_add.len();
+            }
+            Stmt::If(stmt) => {
+                if let Stmt::Block(b) = &mut *stmt.cons {
+                    add_inside_while(&mut b.stmts, to_add);
+                }
+                if let Some(o) = &mut stmt.alt {
+                    if let Stmt::Block(b) = &mut **o {
+                        add_inside_while(&mut b.stmts, to_add);
+                    }
+                }
+            }
+            Stmt::Expr(_) => (),
+            Stmt::Return(_) => (),
+            _ => unimplemented!("{:?}", stmt),
+        }
+        i += 1;
+    }
+}

@@ -1,0 +1,20 @@
+[package]
+name = "hermes_dec"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bitfield-struct = "*"
+c_struct_macro = { path = "../c_struct_macro" }
+help_macros = { path = "../help_macros" }
+byteorder = "*"
+safe-transmute = "0.11.2"
+lazy_static = "*"
+swc_ecma_ast = "*"
+swc_ecma_codegen = "*"
+swc_common = "*"
+petgraph = "*"
+fixedbitset = "*"
+num-bigint = "*"

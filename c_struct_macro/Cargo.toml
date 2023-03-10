@@ -1,0 +1,17 @@
+[package]
+name = "c_struct_macro"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "c_struct_macro"
+path = "src/lib.rs"
+proc-macro = true
+
+[dependencies]
+syn = { version = "*", features = ["extra-traits"] }
+quote = "*"
+proc-macro2 = "*"
+bitfield-struct = "*"

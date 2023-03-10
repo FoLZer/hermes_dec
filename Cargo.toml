@@ -1,0 +1,8 @@
+[workspace]
+
+members = [
+    "hermes_dec",
+	"c_struct_macro",
+	"hbc_parser_tool",
+	"help_macros"
+]
