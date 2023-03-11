@@ -162,24 +162,20 @@ pub struct FunctionHeader {
 }
 
 impl FunctionHeader {
-    pub fn read_bytecode<R: Seek + Read>(&self, reader: &mut R) -> Option<Vec<u8>> {
-        let previous_offset = reader.stream_position().unwrap();
-        reader
-            .seek(std::io::SeekFrom::Start(self.offset as u64))
-            .unwrap();
+    pub fn read_bytecode<R: Seek + Read>(&self, reader: &mut R) -> Result<Vec<u8>, std::io::Error> {
+        let previous_offset = reader.stream_position()?;
+        reader.seek(std::io::SeekFrom::Start(self.offset as u64))?;
         let mut v = vec![0; self.bytecode_size_in_bytes as usize];
-        reader.read_exact(&mut v).unwrap();
-        reader
-            .seek(std::io::SeekFrom::Start(previous_offset))
-            .unwrap();
-        Some(v)
+        reader.read_exact(&mut v)?;
+        reader.seek(std::io::SeekFrom::Start(previous_offset))?;
+        Ok(v)
     }
 
     pub fn disassemble_function<T: InstructionSet + Clone, R: Seek + Read>(
         &self,
         reader: &mut R,
-    ) -> Vec<InstructionInfo<T>> {
-        let bytecode = self.read_bytecode(reader).unwrap();
+    ) -> Result<Vec<InstructionInfo<T>>, std::io::Error> {
+        let bytecode = self.read_bytecode(reader)?;
         let mut bytecode_cursor = Cursor::new(&bytecode);
         let mut instructions = Vec::new();
         while !bytecode_cursor.is_empty() {
@@ -191,7 +187,7 @@ impl FunctionHeader {
                 instruction: opcode,
             });
         }
-        instructions
+        Ok(instructions)
     }
 }
 
@@ -224,41 +220,41 @@ pub struct SmallFuncHeader {
 }
 
 impl SmallFuncHeader {
-    pub fn read_large_header<R: Seek + Read>(&self, reader: &mut R) -> FunctionHeader {
-        let previous_offset = reader.stream_position().unwrap();
+    pub fn read_large_header<R: Seek + Read>(
+        &self,
+        reader: &mut R,
+    ) -> Result<FunctionHeader, std::io::Error> {
+        let previous_offset = reader.stream_position()?;
         let offset = ((self.info_offset() << 16) | self.offset()) as u64;
-        reader.seek(std::io::SeekFrom::Start(offset)).unwrap();
+        reader.seek(std::io::SeekFrom::Start(offset))?;
         let r = FunctionHeader::from_reader(reader);
-        reader
-            .seek(std::io::SeekFrom::Start(previous_offset))
-            .unwrap();
-        r
+        reader.seek(std::io::SeekFrom::Start(previous_offset))?;
+        Ok(r)
     }
 
-    pub fn read_bytecode<R: Seek + Read>(&self, reader: &mut R) -> Option<Vec<u8>> {
+    pub fn read_bytecode<R: Seek + Read>(
+        &self,
+        reader: &mut R,
+    ) -> Result<Option<Vec<u8>>, std::io::Error> {
         if self.flags().overflowed() {
-            return None;
+            return Ok(None);
         }
-        let previous_offset = reader.stream_position().unwrap();
-        reader
-            .seek(std::io::SeekFrom::Start(self.offset() as u64))
-            .unwrap();
+        let previous_offset = reader.stream_position()?;
+        reader.seek(std::io::SeekFrom::Start(self.offset() as u64))?;
         let mut v = vec![0; self.bytecode_size_in_bytes() as usize];
-        reader.read_exact(&mut v).unwrap();
-        reader
-            .seek(std::io::SeekFrom::Start(previous_offset))
-            .unwrap();
-        Some(v)
+        reader.read_exact(&mut v)?;
+        reader.seek(std::io::SeekFrom::Start(previous_offset))?;
+        Ok(Some(v))
     }
 
     pub fn disassemble_function<T: InstructionSet + std::fmt::Debug + Clone, R: Seek + Read>(
         &self,
         reader: &mut R,
-    ) -> Vec<InstructionInfo<T>> {
+    ) -> Result<Vec<InstructionInfo<T>>, std::io::Error> {
         if self.flags().overflowed() {
-            self.read_large_header(reader).disassemble_function(reader)
+            self.read_large_header(reader)?.disassemble_function(reader)
         } else {
-            let bytecode = self.read_bytecode(reader).unwrap();
+            let bytecode = self.read_bytecode(reader)?.unwrap();
             let mut bytecode_cursor = Cursor::new(&bytecode);
             let mut instructions = Vec::new();
             while !bytecode_cursor.is_empty() {
@@ -270,7 +266,7 @@ impl SmallFuncHeader {
                     instruction: opcode,
                 });
             }
-            instructions
+            Ok(instructions)
         }
     }
 }
@@ -591,7 +587,7 @@ impl BytecodeFile {
         }
     }
 
-    pub fn from_reader<T: Read>(reader: &mut T) -> Self {
+    pub fn from_reader<T: Read>(reader: &mut T) -> Result<Self, std::io::Error> {
         let header = {
             let _size = std::mem::size_of::<BytecodeFileHeader>();
 
@@ -601,7 +597,7 @@ impl BytecodeFile {
             let mut v = Vec::with_capacity(header.function_count as usize);
             for _ in 0..header.function_count {
                 v.push(<SmallFuncHeader as From<u128>>::from(
-                    reader.read_u128::<LittleEndian>().unwrap(),
+                    reader.read_u128::<LittleEndian>()?,
                 ));
             }
             v
@@ -610,7 +606,7 @@ impl BytecodeFile {
             let mut v = Vec::with_capacity(header.string_kind_count as usize);
             for _ in 0..header.string_kind_count {
                 v.push(<StringKindEntry as From<u32>>::from(
-                    reader.read_u32::<LittleEndian>().unwrap(),
+                    reader.read_u32::<LittleEndian>()?,
                 ));
             }
             v
@@ -618,7 +614,7 @@ impl BytecodeFile {
         let identifier_hashes = {
             let mut v = Vec::with_capacity(header.identifier_count as usize);
             for _ in 0..header.identifier_count {
-                v.push(reader.read_u32::<LittleEndian>().unwrap());
+                v.push(reader.read_u32::<LittleEndian>()?);
             }
             v
         };
@@ -627,7 +623,7 @@ impl BytecodeFile {
             for _ in 0..header.string_count {
                 let _size = std::mem::size_of::<SmallStringTableEntry>();
                 v.push(<SmallStringTableEntry as From<u32>>::from(
-                    reader.read_u32::<LittleEndian>().unwrap(),
+                    reader.read_u32::<LittleEndian>()?,
                 ));
             }
             v
@@ -637,7 +633,7 @@ impl BytecodeFile {
             for _ in 0..header.overflow_string_count {
                 let _size = std::mem::size_of::<OverflowStringTableEntry>();
                 v.push(<OverflowStringTableEntry as From<u64>>::from(
-                    reader.read_u64::<LittleEndian>().unwrap(),
+                    reader.read_u64::<LittleEndian>()?,
                 ));
             }
             v
@@ -646,7 +642,7 @@ impl BytecodeFile {
             let mut v = Vec::with_capacity(header.string_storage_size as usize);
             for _ in 0..header.string_storage_size {
                 let _size = std::mem::size_of::<c_char>();
-                v.push(reader.read_u8().unwrap() as c_char);
+                v.push(reader.read_u8()? as c_char);
             }
             v
         };
@@ -654,7 +650,7 @@ impl BytecodeFile {
             let mut v = Vec::with_capacity(header.array_buffer_size as usize);
             for _ in 0..header.array_buffer_size {
                 let _size = std::mem::size_of::<u8>();
-                v.push(reader.read_u8().unwrap());
+                v.push(reader.read_u8()?);
             }
             v
         };
@@ -662,7 +658,7 @@ impl BytecodeFile {
             let mut v = Vec::with_capacity(header.obj_key_buffer_size as usize);
             for _ in 0..header.obj_key_buffer_size {
                 let _size = std::mem::size_of::<u8>();
-                v.push(reader.read_u8().unwrap());
+                v.push(reader.read_u8()?);
             }
             v
         };
@@ -670,7 +666,7 @@ impl BytecodeFile {
             let mut v = Vec::with_capacity(header.obj_value_buffer_size as usize);
             for _ in 0..header.obj_value_buffer_size {
                 let _size = std::mem::size_of::<u8>();
-                v.push(reader.read_u8().unwrap());
+                v.push(reader.read_u8()?);
             }
             v
         };
@@ -679,7 +675,7 @@ impl BytecodeFile {
             for _ in 0..header.big_int_count {
                 let _size = std::mem::size_of::<BigIntTableEntry>();
                 v.push(<BigIntTableEntry as From<u64>>::from(
-                    reader.read_u64::<LittleEndian>().unwrap(),
+                    reader.read_u64::<LittleEndian>()?,
                 ));
             }
             v
@@ -688,7 +684,7 @@ impl BytecodeFile {
             let mut v = Vec::with_capacity(header.big_int_storage_size as usize);
             for _ in 0..header.big_int_storage_size {
                 let _size = std::mem::size_of::<u8>();
-                v.push(reader.read_u8().unwrap());
+                v.push(reader.read_u8()?);
             }
             v
         };
@@ -696,7 +692,7 @@ impl BytecodeFile {
             let mut v = Vec::with_capacity(header.reg_exp_count as usize);
             for _ in 0..header.reg_exp_count {
                 v.push(<RegExpTableEntry as From<u64>>::from(
-                    reader.read_u64::<LittleEndian>().unwrap(),
+                    reader.read_u64::<LittleEndian>()?,
                 ));
             }
             v
@@ -705,7 +701,7 @@ impl BytecodeFile {
             let mut v = Vec::with_capacity(header.reg_exp_storage_size as usize);
             for _ in 0..header.reg_exp_storage_size {
                 let _size = std::mem::size_of::<u8>();
-                v.push(reader.read_u8().unwrap());
+                v.push(reader.read_u8()?);
             }
             v
         };
@@ -715,8 +711,8 @@ impl BytecodeFile {
                 for _ in 0..header.cjs_module_count {
                     let _size = std::mem::size_of::<u64>();
                     v.push((
-                        reader.read_u32::<LittleEndian>().unwrap(),
-                        reader.read_u32::<LittleEndian>().unwrap(),
+                        reader.read_u32::<LittleEndian>()?,
+                        reader.read_u32::<LittleEndian>()?,
                     ));
                 }
                 (None, Some(v))
@@ -725,8 +721,8 @@ impl BytecodeFile {
                 for _ in 0..header.cjs_module_count {
                     let _size = std::mem::size_of::<u64>();
                     v.push((
-                        reader.read_u32::<LittleEndian>().unwrap(),
-                        reader.read_u32::<LittleEndian>().unwrap(),
+                        reader.read_u32::<LittleEndian>()?,
+                        reader.read_u32::<LittleEndian>()?,
                     ));
                 }
                 (Some(v), None)
@@ -737,13 +733,13 @@ impl BytecodeFile {
             for _ in 0..header.function_source_count {
                 let _size = std::mem::size_of::<u64>();
                 v.push((
-                    reader.read_u32::<LittleEndian>().unwrap(),
-                    reader.read_u32::<LittleEndian>().unwrap(),
+                    reader.read_u32::<LittleEndian>()?,
+                    reader.read_u32::<LittleEndian>()?,
                 ));
             }
             v
         };
-        Self {
+        Ok(Self {
             header,
             function_headers,
             string_table_entries, //ALL TODO's
@@ -761,7 +757,7 @@ impl BytecodeFile {
             cjs_module_table,
             cjs_module_table_static,
             function_source_table,
-        }
+        })
     }
 
     pub fn get_string(&self, index: u32) -> Option<String> {

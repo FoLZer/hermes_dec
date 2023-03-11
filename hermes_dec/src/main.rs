@@ -72,7 +72,7 @@ fn main() {
                     }
                 };
                 let mut cursor = Cursor::new(buf.as_slice());
-                let f = BytecodeFile::from_reader(&mut cursor);
+                let f = BytecodeFile::from_reader(&mut cursor).unwrap();
                 for (i, header) in f.function_headers.iter().enumerate() {
                     println!(
                         "Function {i}: (name: {}, offset: {}, size: {}, param_count: {})",
@@ -126,11 +126,12 @@ fn main() {
                     }
                 };
                 let mut cursor = Cursor::new(buf.as_slice());
-                let f = BytecodeFile::from_reader(&mut cursor);
+                let f = BytecodeFile::from_reader(&mut cursor).unwrap();
 
                 let header = f.function_headers[function_id];
-                let disassembled =
-                    header.disassemble_function::<Instruction, Cursor<&[u8]>>(&mut cursor);
+                let disassembled = header
+                    .disassemble_function::<Instruction, Cursor<&[u8]>>(&mut cursor)
+                    .unwrap();
                 let flow_graph = construct_flow_graph(&disassembled);
                 let cfg = construct_cfg(&flow_graph);
                 let func = FnDecl {
