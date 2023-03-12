@@ -3,8 +3,11 @@
 use petgraph::stable_graph::NodeIndex;
 use std::env;
 use std::fs::File;
+use std::io::BufWriter;
 use std::io::Cursor;
 use std::io::Read;
+use std::io::Write;
+use std::io::stdout;
 use std::path::PathBuf;
 use std::str::FromStr;
 use swc_common::sync::Lrc;
@@ -33,7 +36,7 @@ mod hermes_file_reader;
 fn print_help() {
     println!("Correct usage: hermes_dec [bundle_path] [arg2]");
     println!("bundle_path is the path to an index.android.bundle from unpacked hermes application");
-    println!("Possible options for arg2: \"show_functions\", \"disassemble [function_id] [output_path]\"");
+    println!("Possible options for arg2: \"show_functions\", \"disassemble function_id [output_path]\", \"strings [output_path]\"");
 }
 
 fn main() {
@@ -98,25 +101,6 @@ fn main() {
                     print_help();
                     return;
                 };
-                let arg4 = args.next();
-                let mut output_file = if arg4.is_some() {
-                    let output_path = arg4.unwrap();
-                    let output_path = PathBuf::from_str(&output_path).unwrap();
-                    match File::create(output_path.clone()) {
-                        Ok(f) => f,
-                        Err(e) => {
-                            println!(
-                                "Error while opening output file {}: {}",
-                                output_path.display(),
-                                e
-                            );
-                            return;
-                        }
-                    }
-                } else {
-                    print_help();
-                    return;
-                };
                 let mut buf = Vec::new();
                 match bundle_path.read_to_end(&mut buf) {
                     Ok(_) => (),
@@ -127,56 +111,75 @@ fn main() {
                 };
                 let mut cursor = Cursor::new(buf.as_slice());
                 let f = BytecodeFile::from_reader(&mut cursor).unwrap();
-
-                let header = f.function_headers[function_id];
-                let disassembled = header
-                    .disassemble_function::<Instruction, Cursor<&[u8]>>(&mut cursor)
-                    .unwrap();
-                let flow_graph = construct_flow_graph(&disassembled);
-                let cfg = construct_cfg(&flow_graph);
-                let func = FnDecl {
-                    ident: Ident::new(format!("f{function_id}").as_str().into(), DUMMY_SP),
-                    function: Box::new(Function {
-                        params: Vec::new(),
-                        decorators: Vec::new(),
-                        span: DUMMY_SP,
-                        body: Some(BlockStmt {
-                            span: DUMMY_SP,
-                            stmts: generate_ast(
-                                &f,
-                                &cfg,
-                                &disassembled,
-                                NodeIndex::new(0),
-                                false,
-                                None,
-                                None,
-                            ),
-                        }),
-                        is_generator: false,
-                        is_async: false,
-                        type_params: None,
-                        return_type: None,
-                    }),
-                    declare: false,
+                let arg4 = args.next();
+                match arg4 {
+                    Some(output_path) => {
+                        let output_path = PathBuf::from_str(&output_path).unwrap();
+                        let mut output_file = match File::create(output_path.clone()) {
+                            Ok(f) => f,
+                            Err(e) => {
+                                println!(
+                                    "Error while opening output file {}: {}",
+                                    output_path.display(),
+                                    e
+                                );
+                                return;
+                            }
+                        };
+                        disassemble_function(&mut cursor, &f, function_id, &mut output_file);
+                    }
+                    None => {
+                        disassemble_function(&mut cursor, &f, function_id, &mut stdout());
+                    }
+                }
+            }
+            "strings" => {
+                let mut buf = Vec::new();
+                match bundle_path.read_to_end(&mut buf) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        println!("Error while reading provided file: {}", e);
+                        return;
+                    }
                 };
-                let cm = Lrc::new(SourceMap::new(FilePathMapping::empty()));
-                let mut emitter = Emitter {
-                    cfg: swc_ecma_codegen::Config {
-                        target: EsVersion::Es2022,
-                        ascii_only: false,
-                        minify: false,
-                        omit_last_semi: false,
-                    },
-                    cm: cm.clone(),
-                    comments: None,
-                    wr: JsWriter::new(cm, "\n", &mut output_file, None),
-                };
-                let program = Program::Script(Script {
-                    span: DUMMY_SP,
-                    body: vec![Stmt::Decl(Decl::Fn(func))],
-                    shebang: None,
-                });
-                emitter.emit_program(&program).unwrap();
+                let mut cursor = Cursor::new(buf.as_slice());
+                let f = BytecodeFile::from_reader(&mut cursor).unwrap();
+                let arg4 = args.next();
+                match arg4 {
+                    Some(output_path) => {
+                        let output_path = PathBuf::from_str(&output_path).unwrap();
+                        let mut output_file = match File::create(output_path.clone()) {
+                            Ok(f) => BufWriter::new(f),
+                            Err(e) => {
+                                println!(
+                                    "Error while opening output file {}: {}",
+                                    output_path.display(),
+                                    e
+                                );
+                                return;
+                            }
+                        };
+                        for s_index in 0..f.header.string_count {
+                            let s = f.get_string(s_index).unwrap_or("".to_string());
+                            match writeln!(output_file, "{}: {}", s_index, s) {
+                                Ok(_) => (),
+                                Err(e) => {
+                                    println!(
+                                        "Error while writing output file {}: {}",
+                                        output_path.display(),
+                                        e
+                                    );
+                                }
+                            };
+                        }
+                    }
+                    None => {
+                        for s_index in 0..f.header.string_count {
+                            let s = f.get_string(s_index).unwrap_or("".to_string());
+                            writeln!(stdout(), "{}: {}", s_index, s).unwrap();
+                        }
+                    }
+                }
             }
             _ => {
                 print_help();
@@ -188,4 +191,56 @@ fn main() {
         print_help();
         return;
     };
+}
+
+fn disassemble_function<W: Write>(cursor: &mut Cursor<&[u8]>, f: &BytecodeFile, function_id: usize, output: &mut W) {
+    let header = f.function_headers[function_id];
+    let disassembled = header
+        .disassemble_function::<Instruction, Cursor<&[u8]>>(cursor)
+        .unwrap();
+    let flow_graph = construct_flow_graph(&disassembled);
+    let cfg = construct_cfg(&flow_graph);
+    let func = FnDecl {
+        ident: Ident::new(format!("f{function_id}").as_str().into(), DUMMY_SP),
+        function: Box::new(Function {
+            params: Vec::new(),
+            decorators: Vec::new(),
+            span: DUMMY_SP,
+            body: Some(BlockStmt {
+                span: DUMMY_SP,
+                stmts: generate_ast(
+                    &f,
+                    &cfg,
+                    &disassembled,
+                    NodeIndex::new(0),
+                    false,
+                    None,
+                    None,
+                ),
+            }),
+            is_generator: false,
+            is_async: false,
+            type_params: None,
+            return_type: None,
+        }),
+        declare: false,
+    };
+    let cm = Lrc::new(SourceMap::new(FilePathMapping::empty()));
+    let mut emitter = Emitter {
+        cfg: swc_ecma_codegen::Config {
+            target: EsVersion::Es2022,
+            ascii_only: false,
+            minify: false,
+            omit_last_semi: false,
+        },
+        cm: cm.clone(),
+        comments: None,
+        wr: JsWriter::new(cm, "\n", output, None),
+    };
+    let program = Program::Script(Script {
+        span: DUMMY_SP,
+        body: vec![Stmt::Decl(Decl::Fn(func))],
+        shebang: None,
+    });
+    emitter.emit_program(&program).unwrap();
 }

@@ -38,12 +38,15 @@ fn transmute_field<T: TriviallyTransmutable>(slice: &[u8]) -> T {
 
 const MAGIC: u64 = 0x1F1903C103BC1FC6; //TODO
 const SHA1_NUM_BYTES: usize = 20;
+static SUPPORTED_VERSIONS: [u32; 1] = [
+    93
+];
 
 #[bitfield(u8)]
-struct BytecodeOptions {
-    static_builtins: bool,
-    cjs_modules_statically_resolved: bool,
-    has_async: bool,
+pub struct BytecodeOptions {
+    pub static_builtins: bool,
+    pub cjs_modules_statically_resolved: bool,
+    pub has_async: bool,
 
     #[bits(5)]
     _padding: u8,
@@ -53,29 +56,29 @@ unsafe impl TriviallyTransmutable for BytecodeOptions {}
 #[repr(C)]
 #[derive(FromBytes, Clone, Copy, Debug)]
 pub struct BytecodeFileHeader {
-    magic: u64,
-    version: u32,
-    source_hash: [u8; SHA1_NUM_BYTES],
-    file_length: u32,
-    global_code_index: u32,
-    function_count: u32,
-    string_kind_count: u32,
-    identifier_count: u32,
-    string_count: u32,
-    overflow_string_count: u32,
-    string_storage_size: u32,
-    big_int_count: u32,
-    big_int_storage_size: u32,
-    reg_exp_count: u32,
-    reg_exp_storage_size: u32,
-    array_buffer_size: u32,
-    obj_key_buffer_size: u32,
-    obj_value_buffer_size: u32,
-    segment_id: u32,
-    cjs_module_count: u32,
-    function_source_count: u32,
-    debug_info_offset: u32,
-    options: BytecodeOptions,
+    pub magic: u64,
+    pub version: u32,
+    pub source_hash: [u8; SHA1_NUM_BYTES],
+    pub file_length: u32,
+    pub global_code_index: u32,
+    pub function_count: u32,
+    pub string_kind_count: u32,
+    pub identifier_count: u32,
+    pub string_count: u32,
+    pub overflow_string_count: u32,
+    pub string_storage_size: u32,
+    pub big_int_count: u32,
+    pub big_int_storage_size: u32,
+    pub reg_exp_count: u32,
+    pub reg_exp_storage_size: u32,
+    pub array_buffer_size: u32,
+    pub obj_key_buffer_size: u32,
+    pub obj_value_buffer_size: u32,
+    pub segment_id: u32,
+    pub cjs_module_count: u32,
+    pub function_source_count: u32,
+    pub debug_info_offset: u32,
+    pub options: BytecodeOptions,
 
     _padding: [u8; 19],
 }
@@ -361,6 +364,12 @@ impl BytecodeFile {
 
             BytecodeFileHeader::from_bytes(&bytes[offset..offset + size])
         };
+        if header.magic != MAGIC {
+            println!("WARN: Incorrect MAGIC header found (expected: {}, got: {})", MAGIC, header.magic);
+        }
+        if !SUPPORTED_VERSIONS.contains(&header.version) {
+            println!("WARN: Unsupported bytecode version found (got: {})", header.version);
+        }
         let function_headers = {
             let mut v = Vec::with_capacity(header.function_count as usize);
             for _ in 0..header.function_count {
@@ -593,6 +602,12 @@ impl BytecodeFile {
 
             BytecodeFileHeader::from_reader(reader)
         };
+        if header.magic != MAGIC {
+            println!("WARN: Incorrect MAGIC header found (expected: {}, got: {})", MAGIC, header.magic);
+        }
+        if !SUPPORTED_VERSIONS.contains(&header.version) {
+            println!("WARN: Unsupported bytecode version found (got: {})", header.version);
+        }
         let function_headers = {
             let mut v = Vec::with_capacity(header.function_count as usize);
             for _ in 0..header.function_count {

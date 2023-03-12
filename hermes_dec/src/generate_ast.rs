@@ -8,7 +8,7 @@ use swc_common::DUMMY_SP;
 use swc_ecma_ast::*;
 
 use crate::{
-    bytecode::v93::Instruction,
+    bytecode::v93::{Instruction, JS_BUILTINS},
     hermes_file_reader::{BytecodeFile, InstructionInfo},
 };
 
@@ -5596,16 +5596,144 @@ fn simple_instructions_to_ast(
                 })),
             })),
             Instruction::PutOwnByIndexL {
-                dst_obj_reg: _,
-                value_reg: _,
-                index: _,
-            } => todo!(),
+                dst_obj_reg,
+                value_reg,
+                index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{dst_obj_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        prop: MemberProp::Computed(ComputedPropName {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Lit(Lit::Num(Number {
+                                span: DUMMY_SP,
+                                value: *index as f64,
+                                raw: None,
+                            }))),
+                        }),
+                    }))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{value_reg}").as_str().into(),
+                        optional: false,
+                    })),
+                })),
+            })),
             Instruction::PutOwnByVal {
-                dst_obj_reg: _,
-                value_reg: _,
-                property_name_reg: _,
-                enumerable: _,
-            } => todo!(),
+                dst_obj_reg,
+                value_reg,
+                property_name_reg,
+                enumerable,
+            } => {
+                if *enumerable {
+                    stmts.push(Stmt::Expr(ExprStmt {
+                        span: DUMMY_SP,
+                        expr: Box::new(Expr::Assign(AssignExpr {
+                            span: DUMMY_SP,
+                            op: AssignOp::Assign,
+                            left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
+                                span: DUMMY_SP,
+                                obj: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{dst_obj_reg}").as_str().into(),
+                                    optional: false,
+                                })),
+                                prop: MemberProp::Computed(ComputedPropName {
+                                    span: DUMMY_SP,
+                                    expr: Box::new(Expr::Ident(Ident {
+                                        span: DUMMY_SP,
+                                        sym: format!("r{property_name_reg}").as_str().into(),
+                                        optional: false
+                                    })),
+                                }),
+                            }))),
+                            right: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: format!("r{value_reg}").as_str().into(),
+                                optional: false,
+                            })),
+                        })),
+                    }))
+                } else {
+                    stmts.push(Stmt::Expr(ExprStmt {
+                        span: DUMMY_SP,
+                        expr: Box::new(Expr::Call(CallExpr {
+                            span: DUMMY_SP,
+                            callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                                span: DUMMY_SP,
+                                obj: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: "Object".into(),
+                                    optional: false
+                                })),
+                                prop: MemberProp::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: "defineProperty".into(),
+                                    optional: false
+                                })
+                            }))),
+                            args: vec![
+                                ExprOrSpread {
+                                    spread: None,
+                                    expr: Box::new(Expr::Ident(Ident {
+                                        span: DUMMY_SP,
+                                        sym: format!("r{dst_obj_reg}").as_str().into(),
+                                        optional: false
+                                    }))
+                                },
+                                ExprOrSpread {
+                                    spread: None,
+                                    expr: Box::new(Expr::Ident(Ident {
+                                        span: DUMMY_SP,
+                                        sym: format!("r{property_name_reg}").as_str().into(),
+                                        optional: false
+                                    }))
+                                },
+                                ExprOrSpread {
+                                    spread: None,
+                                    expr: Box::new(Expr::Object(ObjectLit {
+                                        span: DUMMY_SP,
+                                        props: vec![
+                                            PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                                                key: PropName::Ident(Ident {
+                                                    span: DUMMY_SP,
+                                                    sym: "value".into(),
+                                                    optional: false
+                                                }),
+                                                value: Box::new(Expr::Ident(Ident {
+                                                    span: DUMMY_SP,
+                                                    sym: format!("r{value_reg}").as_str().into(),
+                                                    optional: false
+                                                }))
+                                            }))),
+                                            PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                                                key: PropName::Ident(Ident {
+                                                    span: DUMMY_SP,
+                                                    sym: "enumerable".into(),
+                                                    optional: false
+                                                }),
+                                                value: Box::new(Expr::Lit(Lit::Bool(Bool {
+                                                    span: DUMMY_SP,
+                                                    value: false
+                                                })))
+                                            }))),
+                                        ]
+                                    }))
+                                },
+                            ],
+                            type_args: None
+                        }))
+                    }))
+                }
+            },
             Instruction::DelById {
                 dst_reg,
                 obj_reg,
@@ -5777,12 +5905,94 @@ fn simple_instructions_to_ast(
                 })),
             })),
             Instruction::PutOwnGetterSetterByVal {
-                obj_reg: _,
-                property_name_reg: _,
-                getter_closure_reg: _,
-                setter_closure_reg: _,
-                enumerable: _,
-            } => todo!(),
+                obj_reg,
+                property_name_reg,
+                getter_closure_reg,
+                setter_closure_reg,
+                enumerable,
+            } => {
+                stmts.push(Stmt::Expr(ExprStmt {
+                    span: DUMMY_SP,
+                    expr: Box::new(Expr::Call(CallExpr {
+                        span: DUMMY_SP,
+                        callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                            span: DUMMY_SP,
+                            obj: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: "Object".into(),
+                                optional: false
+                            })),
+                            prop: MemberProp::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: "defineProperty".into(),
+                                optional: false
+                            })
+                        }))),
+                        args: vec![
+                            ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{obj_reg}").as_str().into(),
+                                    optional: false
+                                }))
+                            },
+                            ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{property_name_reg}").as_str().into(),
+                                    optional: false
+                                }))
+                            },
+                            ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Object(ObjectLit {
+                                    span: DUMMY_SP,
+                                    props: vec![
+                                        PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                                            key: PropName::Ident(Ident {
+                                                span: DUMMY_SP,
+                                                sym: "get".into(),
+                                                optional: false
+                                            }),
+                                            value: Box::new(Expr::Ident(Ident {
+                                                span: DUMMY_SP,
+                                                sym: format!("r{getter_closure_reg}").as_str().into(),
+                                                optional: false
+                                            }))
+                                        }))),
+                                        PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                                            key: PropName::Ident(Ident {
+                                                span: DUMMY_SP,
+                                                sym: "set".into(),
+                                                optional: false
+                                            }),
+                                            value: Box::new(Expr::Ident(Ident {
+                                                span: DUMMY_SP,
+                                                sym: format!("r{setter_closure_reg}").as_str().into(),
+                                                optional: false
+                                            }))
+                                        }))),
+                                        PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                                            key: PropName::Ident(Ident {
+                                                span: DUMMY_SP,
+                                                sym: "enumerable".into(),
+                                                optional: false
+                                            }),
+                                            value: Box::new(Expr::Lit(Lit::Bool(Bool {
+                                                span: DUMMY_SP,
+                                                value: *enumerable
+                                            })))
+                                        }))),
+                                    ]
+                                }))
+                            },
+                        ],
+                        type_args: None
+                    }))
+                }))
+            }
             Instruction::GetPNameList {
                 dst_reg,
                 obj_reg,
@@ -6040,14 +6250,80 @@ fn simple_instructions_to_ast(
                 arguments_len: _,
             } => todo!(),
             Instruction::GetBuiltinClosure {
-                dst_reg: _,
-                builtin_number: _,
-            } => todo!(),
+                dst_reg,
+                builtin_number,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new({
+                        let builtin = *JS_BUILTINS.get(*builtin_number as usize).unwrap();
+                        if builtin.contains('.') {
+                            let mut s = builtin.split('.');
+                            Expr::Member(MemberExpr {
+                                span: DUMMY_SP,
+                                obj: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: s.next().unwrap().into(),
+                                    optional: false
+                                })),
+                                prop: MemberProp::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: s.next().unwrap().into(),
+                                    optional: false
+                                })
+                            })
+                        } else {
+                            Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: builtin.into(),
+                                optional: false
+                            })
+                        }
+                    })
+                }))
+            })),
             Instruction::Catch { dst_reg: _ } => todo!(),
             Instruction::DirectEval {
-                dst_reg: _,
-                value_reg: _,
-            } => todo!(),
+                dst_reg,
+                value_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false
+                    }))),
+                    right: Box::new(Expr::Call(CallExpr {
+                        span: DUMMY_SP,
+                        callee: Callee::Expr(Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: "eval".into(),
+                            optional: false
+                        }))),
+                        args: vec![
+                            ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{value_reg}").as_str().into(),
+                                    optional: false
+                                }))
+                            }
+                        ],
+                        type_args: None
+                    }))
+                }))
+            })),
             Instruction::Throw { value_reg } => stmts.push(Stmt::Throw(ThrowStmt {
                 span: DUMMY_SP,
                 arg: Box::new(Expr::Ident(Ident {
@@ -6060,11 +6336,13 @@ fn simple_instructions_to_ast(
                 dst_reg: _,
                 checked_value_reg: _,
             } => todo!(),
-            Instruction::Debugger => todo!(),
-            Instruction::AsyncBreakCheck => todo!(),
+            Instruction::Debugger => stmts.push(Stmt::Debugger(DebuggerStmt {
+                span: DUMMY_SP
+            })),
+            Instruction::AsyncBreakCheck => (),
             Instruction::ProfilePoint {
                 function_local_profile_point_index: _,
-            } => todo!(),
+            } => (),
             Instruction::CreateClosure {
                 dst_reg,
                 current_environment_reg: _,
@@ -6113,8 +6391,8 @@ fn simple_instructions_to_ast(
             } => todo!(),
             Instruction::CreateThis {
                 dst_reg,
-                prototype_reg: _,
-                constructor_closure_reg: _,
+                prototype_reg,
+                constructor_closure_reg,
             } => stmts.push(Stmt::Expr(ExprStmt {
                 span: DUMMY_SP,
                 expr: Box::new(Expr::Assign(AssignExpr {
@@ -6125,10 +6403,64 @@ fn simple_instructions_to_ast(
                         sym: format!("r{dst_reg}").as_str().into(),
                         optional: false,
                     }))),
-                    right: Box::new(Expr::Ident(Ident {
+                    right: Box::new(Expr::Call(CallExpr {
                         span: DUMMY_SP,
-                        sym: "this".into(),
-                        optional: false,
+                        callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                            span: DUMMY_SP,
+                            obj: Box::new(Expr::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: "Object".into(),
+                                optional: false
+                            })),
+                            prop: MemberProp::Ident(Ident {
+                                span: DUMMY_SP,
+                                sym: "create".into(),
+                                optional: false
+                            })
+                        }))),
+                        args: vec![
+                            ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{prototype_reg}").as_str().into(),
+                                    optional: false,
+                                }))
+                            },
+                            ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Object(ObjectLit {
+                                    span: DUMMY_SP,
+                                    props: vec![
+                                        PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                                            key: PropName::Ident(Ident {
+                                                span: DUMMY_SP,
+                                                sym: "constructor".into(),
+                                                optional: false
+                                            }),
+                                            value: Box::new(Expr::Object(ObjectLit {
+                                                span: DUMMY_SP,
+                                                props: vec![
+                                                    PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                                                        key: PropName::Ident(Ident {
+                                                            span: DUMMY_SP,
+                                                            sym: "value".into(),
+                                                            optional: false
+                                                        }),
+                                                        value: Box::new(Expr::Ident(Ident {
+                                                            span: DUMMY_SP,
+                                                            sym: format!("r{constructor_closure_reg}").as_str().into(),
+                                                            optional: false,
+                                                        }))
+                                                    })))
+                                                ]
+                                            }))
+                                        })))
+                                    ]
+                                }))
+                            }
+                        ],
+                        type_args: None
                     })),
                 })),
             })),
@@ -6176,9 +6508,30 @@ fn simple_instructions_to_ast(
                 })),
             })),
             Instruction::LoadParamLong {
-                dst_reg: _,
-                param_index: _,
-            } => todo!(),
+                dst_reg,
+                param_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident::new(
+                        format!("r{dst_reg}").as_str().into(),
+                        DUMMY_SP,
+                    )))),
+                    right: Box::new(Expr::Member(MemberExpr {
+                        span: DUMMY_SP,
+                        obj: Box::new(Expr::Ident(Ident::new("arguments".into(), DUMMY_SP))),
+                        prop: MemberProp::Computed(ComputedPropName {
+                            span: DUMMY_SP,
+                            expr: Box::new(Expr::Ident(Ident::new(
+                                param_index.to_string().as_str().into(),
+                                DUMMY_SP,
+                            ))),
+                        }),
+                    })),
+                })),
+            })),
             Instruction::LoadConstInt { dst_reg, value } => stmts.push(Stmt::Expr(ExprStmt {
                 span: DUMMY_SP,
                 expr: Box::new(Expr::Assign(AssignExpr {
@@ -6242,10 +6595,45 @@ fn simple_instructions_to_ast(
                 bigint_table_index: _,
             } => todo!(),
             Instruction::LoadConstStringLongIndex {
-                dst_reg: _,
-                string_table_index: _,
-            } => todo!(),
-            Instruction::LoadConstEmpty { dst_reg: _ } => todo!(),
+                dst_reg,
+                string_table_index,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Lit(Lit::Str(Str {
+                        span: DUMMY_SP,
+                        value: f
+                            .get_string(*string_table_index as u32)
+                            .unwrap_or("".to_string())
+                            .as_str()
+                            .into(),
+                        raw: None,
+                    }))),
+                })),
+            })),
+            Instruction::LoadConstEmpty { dst_reg } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident::new(
+                        format!("r{dst_reg}").as_str().into(),
+                        DUMMY_SP,
+                    )))),
+                    right: Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: "undefined".into(),
+                        optional: false,
+                    })),
+                })),
+            })),
             Instruction::CoerceThisNS {
                 dst_reg,
                 this_value_reg,
@@ -6284,21 +6672,101 @@ fn simple_instructions_to_ast(
                 })),
             })),
             Instruction::ToNumber {
-                dst_reg: _,
-                value_reg: _,
-            } => todo!(),
+                dst_reg,
+                value_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Call(CallExpr {
+                        span: DUMMY_SP,
+                        callee: Callee::Expr(Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: "Number".into(),
+                            optional: false
+                        }))),
+                        args: vec![
+                            ExprOrSpread {
+                                spread: None,
+                                expr: Box::new(Expr::Ident(Ident {
+                                    span: DUMMY_SP,
+                                    sym: format!("r{value_reg}").as_str().into(),
+                                    optional: false,
+                                }))
+                            }
+                        ],
+                        type_args: None
+                    })),
+                })),
+            })),
             Instruction::ToNumeric {
                 dst_reg: _,
                 value_reg: _,
             } => todo!(),
             Instruction::ToInt32 {
-                dst_reg: _,
-                value_reg: _,
-            } => todo!(),
+                dst_reg,
+                value_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::BitOr,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: "0".into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
             Instruction::AddEmptyString {
-                dst_reg: _,
-                value_reg: _,
-            } => todo!(),
+                dst_reg,
+                value_reg,
+            } => stmts.push(Stmt::Expr(ExprStmt {
+                span: DUMMY_SP,
+                expr: Box::new(Expr::Assign(AssignExpr {
+                    span: DUMMY_SP,
+                    op: AssignOp::Assign,
+                    left: PatOrExpr::Expr(Box::new(Expr::Ident(Ident {
+                        span: DUMMY_SP,
+                        sym: format!("r{dst_reg}").as_str().into(),
+                        optional: false,
+                    }))),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        op: BinaryOp::Add,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: "\"\"".into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                    })),
+                })),
+            })),
             Instruction::GetArgumentsPropByVal {
                 dst_reg,
                 index_reg,

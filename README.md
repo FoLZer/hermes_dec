@@ -20,7 +20,8 @@ To use hermes_dec, simply run the built binary, passing the path to the Hermes b
 ```
 Additional arguments currently available:
 - show_functions (This will print all available functions into console)
-- disassemble [function_id] [output_path] (this will disassemble function with id "function_id" and output decompiled code to output_path. function_id can be acquired through show_functions (Ids are sequential))
+- disassemble function_id [output_path] (this will disassemble function with id "function_id" and output decompiled code to output_path or stdout if not provided. function_id can be acquired through show_functions (Ids are sequential))
+- strings [output_path] (Outputs all strings in the bundle)
 
 ## Contribution
 This project is still heavily in development, and any contributions are welcome. Please feel free to open issues or submit pull requests.
