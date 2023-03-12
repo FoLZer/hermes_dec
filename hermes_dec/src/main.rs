@@ -3,17 +3,17 @@
 use petgraph::stable_graph::NodeIndex;
 use std::env;
 use std::fs::File;
+use std::io::stdout;
 use std::io::BufWriter;
 use std::io::Cursor;
 use std::io::Read;
 use std::io::Write;
-use std::io::stdout;
 use std::path::PathBuf;
 use std::str::FromStr;
 use swc_common::sync::Lrc;
 use swc_common::FilePathMapping;
 use swc_common::SourceMap;
-use swc_ecma_ast::*;
+use swc_ecma_ast::{Decl, FnDecl, Ident, Program, Script, Stmt};
 use swc_ecma_codegen::text_writer::JsWriter;
 
 use hermes_file_reader::BytecodeFile;
@@ -43,8 +43,7 @@ fn main() {
     let mut args = env::args();
     args.next();
     let bundle_path = args.next();
-    let mut bundle_path = if bundle_path.is_some() {
-        let bundle_path = bundle_path.unwrap();
+    let mut bundle_path = if let Some(bundle_path) = bundle_path {
         let bundle_path = PathBuf::from_str(&bundle_path).unwrap();
         if !bundle_path.is_file() {
             print_help();
@@ -62,15 +61,14 @@ fn main() {
         return;
     };
     let arg2 = args.next();
-    if arg2.is_some() {
-        let arg2 = arg2.unwrap();
+    if let Some(arg2) = arg2 {
         match arg2.as_str() {
             "show_functions" => {
                 let mut buf = Vec::new();
                 match bundle_path.read_to_end(&mut buf) {
                     Ok(_) => (),
                     Err(e) => {
-                        println!("Error while reading provided file: {}", e);
+                        println!("Error while reading provided file: {e}");
                         return;
                     }
                 };
@@ -79,8 +77,7 @@ fn main() {
                 for (i, header) in f.function_headers.iter().enumerate() {
                     println!(
                         "Function {i}: (name: {}, offset: {}, size: {}, param_count: {})",
-                        f.get_string(header.function_name())
-                            .unwrap_or("".to_string()),
+                        f.get_string(header.function_name()).unwrap_or_default(),
                         header.offset(),
                         header.bytecode_size_in_bytes(),
                         header.param_count()
@@ -89,8 +86,8 @@ fn main() {
             }
             "disassemble" => {
                 let arg3 = args.next();
-                let function_id = if arg3.is_some() {
-                    match arg3.unwrap().parse::<usize>() {
+                let function_id = if let Some(arg3) = arg3 {
+                    match arg3.parse::<usize>() {
                         Ok(arg3) => arg3,
                         Err(_) => {
                             print_help();
@@ -105,7 +102,7 @@ fn main() {
                 match bundle_path.read_to_end(&mut buf) {
                     Ok(_) => (),
                     Err(e) => {
-                        println!("Error while reading provided file: {}", e);
+                        println!("Error while reading provided file: {e}");
                         return;
                     }
                 };
@@ -138,7 +135,7 @@ fn main() {
                 match bundle_path.read_to_end(&mut buf) {
                     Ok(_) => (),
                     Err(e) => {
-                        println!("Error while reading provided file: {}", e);
+                        println!("Error while reading provided file: {e}");
                         return;
                     }
                 };
@@ -160,8 +157,8 @@ fn main() {
                             }
                         };
                         for s_index in 0..f.header.string_count {
-                            let s = f.get_string(s_index).unwrap_or("".to_string());
-                            match writeln!(output_file, "{}: {}", s_index, s) {
+                            let s = f.get_string(s_index).unwrap_or_default();
+                            match writeln!(output_file, "{s_index}: {s}") {
                                 Ok(_) => (),
                                 Err(e) => {
                                     println!(
@@ -175,31 +172,53 @@ fn main() {
                     }
                     None => {
                         for s_index in 0..f.header.string_count {
-                            let s = f.get_string(s_index).unwrap_or("".to_string());
-                            writeln!(stdout(), "{}: {}", s_index, s).unwrap();
+                            let s = f.get_string(s_index).unwrap_or_default();
+                            println!("{s_index}: {s}");
                         }
                     }
                 }
             }
             _ => {
                 print_help();
-                return;
             }
         }
-        arg2
     } else {
         print_help();
-        return;
-    };
+    }
 }
 
-fn disassemble_function<W: Write>(cursor: &mut Cursor<&[u8]>, f: &BytecodeFile, function_id: usize, output: &mut W) {
+fn disassemble_function<W: Write>(
+    cursor: &mut Cursor<&[u8]>,
+    f: &BytecodeFile,
+    function_id: usize,
+    output: &mut W,
+) {
     let header = f.function_headers[function_id];
     let disassembled = header
         .disassemble_function::<Instruction, Cursor<&[u8]>>(cursor)
         .unwrap();
     let flow_graph = construct_flow_graph(&disassembled);
+    #[cfg(test)]
+    {
+        writeln!(
+            File::create("./out_flow.dot").unwrap(),
+            "{:?}",
+            petgraph::dot::Dot::new(&flow_graph)
+        )
+        .unwrap();
+    }
+
     let cfg = construct_cfg(&flow_graph);
+    #[cfg(test)]
+    {
+        writeln!(
+            File::create("./out_cfg.dot").unwrap(),
+            "{:?}",
+            petgraph::dot::Dot::new(&cfg)
+        )
+        .unwrap();
+    }
+
     let func = FnDecl {
         ident: Ident::new(format!("f{function_id}").as_str().into(), DUMMY_SP),
         function: Box::new(Function {
@@ -208,15 +227,7 @@ fn disassemble_function<W: Write>(cursor: &mut Cursor<&[u8]>, f: &BytecodeFile, 
             span: DUMMY_SP,
             body: Some(BlockStmt {
                 span: DUMMY_SP,
-                stmts: generate_ast(
-                    &f,
-                    &cfg,
-                    &disassembled,
-                    NodeIndex::new(0),
-                    false,
-                    None,
-                    None,
-                ),
+                stmts: generate_ast(f, &cfg, &disassembled, NodeIndex::new(0), false, None, None),
             }),
             is_generator: false,
             is_async: false,
@@ -243,4 +254,32 @@ fn disassemble_function<W: Write>(cursor: &mut Cursor<&[u8]>, f: &BytecodeFile, 
         shebang: None,
     });
     emitter.emit_program(&program).unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs::File,
+        io::{Cursor, Read},
+    };
+
+    use crate::{disassemble_function, hermes_file_reader::BytecodeFile};
+
+    #[test]
+    fn t() {
+        let mut buf = Vec::new();
+        match File::open("./index.android.bundle")
+            .unwrap()
+            .read_to_end(&mut buf)
+        {
+            Ok(_) => (),
+            Err(e) => {
+                println!("Error while reading provided file: {e}");
+                return;
+            }
+        };
+        let mut cursor = Cursor::new(buf.as_slice());
+        let f = BytecodeFile::from_reader(&mut cursor).unwrap();
+        disassemble_function(&mut cursor, &f, 0, &mut File::create("./out.txt").unwrap())
+    }
 }

@@ -28,7 +28,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -59,7 +59,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -107,7 +107,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -155,7 +155,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -204,7 +204,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -254,7 +254,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -304,7 +304,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -354,7 +354,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -404,7 +404,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -454,7 +454,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -504,7 +504,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -554,7 +554,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -604,7 +604,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -654,7 +654,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -704,7 +704,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -754,7 +754,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -804,7 +804,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -854,7 +854,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -904,7 +904,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -954,7 +954,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -1004,7 +1004,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -1054,7 +1054,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -1104,7 +1104,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -1154,7 +1154,7 @@ pub fn construct_flow_graph(
                         get_instruction_by_offset(
                             instructions,
                             instruction_index,
-                            *relative_offset as i32,
+                            i32::from(*relative_offset),
                         )
                         .unwrap(),
                     ),
@@ -1275,7 +1275,7 @@ pub fn construct_cfg<N, E: Copy>(
                 add_edges.push((
                     NodeIndex::<u32>::new(i),
                     NodeIndex::<u32>::new(i2),
-                    *set.get(&k_i).unwrap(),
+                    set[&k_i],
                 ));
             }
         }

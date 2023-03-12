@@ -145,14 +145,14 @@ fn main() {
                     })
                     .collect::<Vec<OpcodeArg>>(),
             );
-        } else if !line.starts_with("ASSERT_")
-            && !line.starts_with("DEFINE_RET_TARGET")
-            && !line.starts_with("DEFINE_OPERAND_TYPE")
-            && !(line.starts_with('#')
-                || line.starts_with("//")
-                || line.starts_with("/*")
-                || line.starts_with(" *")
-                || line.starts_with("  "))
+        } else if !(line.starts_with("ASSERT_")
+            || line.starts_with("DEFINE_RET_TARGET")
+            || line.starts_with("DEFINE_OPERAND_TYPE")
+            || line.starts_with('#')
+            || line.starts_with("//")
+            || line.starts_with("/*")
+            || line.starts_with(" *")
+            || line.starts_with("  "))
         {
             println!("Unhandled line {line_num}: {line}");
         }

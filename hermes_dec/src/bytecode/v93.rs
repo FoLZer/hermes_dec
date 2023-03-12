@@ -55,7 +55,7 @@ pub static JS_BUILTINS: [&str; 52] = [
     "exportAll",
     "exponentiationOperator",
     "initRegexNamedGroups",
-    "spawnAsync"
+    "spawnAsync",
 ];
 
 #[repr(C)]

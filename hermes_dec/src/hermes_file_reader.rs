@@ -30,17 +30,15 @@ fn transmute_field<T: TriviallyTransmutable>(slice: &[u8]) -> T {
         let mut v = vec![0; size];
         v[..].clone_from_slice(slice);
         v.reverse();
-        safe_transmute::transmute_one_pedantic::<T>(v.as_slice()).unwrap()
+        return safe_transmute::transmute_one_pedantic::<T>(v.as_slice()).unwrap();
     } else {
-        safe_transmute::transmute_one_pedantic::<T>(slice).unwrap()
+        return safe_transmute::transmute_one_pedantic::<T>(slice).unwrap();
     }
 }
 
-const MAGIC: u64 = 0x1F1903C103BC1FC6; //TODO
+const MAGIC: u64 = 0x1F19_03C1_03BC_1FC6; //TODO
 const SHA1_NUM_BYTES: usize = 20;
-static SUPPORTED_VERSIONS: [u32; 1] = [
-    93
-];
+static SUPPORTED_VERSIONS: [u32; 1] = [93];
 
 #[bitfield(u8)]
 pub struct BytecodeOptions {
@@ -83,6 +81,7 @@ pub struct BytecodeFileHeader {
     _padding: [u8; 19],
 }
 
+#[allow(dead_code)]
 struct BytecodeFileFooter {
     file_hash: [u8; SHA1_NUM_BYTES],
 }
@@ -98,9 +97,9 @@ enum Prohibit {
 impl From<u8> for Prohibit {
     fn from(value: u8) -> Self {
         match value {
-            0 => Prohibit::Call,
-            1 => Prohibit::Construct,
-            2 => Prohibit::None,
+            0 => Self::Call,
+            1 => Self::Construct,
+            2 => Self::None,
             _ => panic!("Invalid Prohibit value"),
         }
     }
@@ -108,7 +107,7 @@ impl From<u8> for Prohibit {
 
 impl From<Prohibit> for u8 {
     fn from(val: Prohibit) -> Self {
-        val as u8
+        val as Self
     }
 }
 
@@ -129,7 +128,7 @@ unsafe impl TriviallyTransmutable for FunctionHeaderFlags {}
 
 impl From<FunctionHeaderFlags> for u128 {
     fn from(val: FunctionHeaderFlags) -> Self {
-        <FunctionHeaderFlags as Into<u8>>::into(val) as u128
+        Self::from(<FunctionHeaderFlags as Into<u8>>::into(val))
     }
 }
 
@@ -139,6 +138,7 @@ impl From<u128> for FunctionHeaderFlags {
     }
 }
 
+#[allow(dead_code)]
 enum FunctionHeaderFlag {
     Prohibits(Prohibit),
     FlagsStruct(FunctionHeaderFlags),
@@ -167,7 +167,7 @@ pub struct FunctionHeader {
 impl FunctionHeader {
     pub fn read_bytecode<R: Seek + Read>(&self, reader: &mut R) -> Result<Vec<u8>, std::io::Error> {
         let previous_offset = reader.stream_position()?;
-        reader.seek(std::io::SeekFrom::Start(self.offset as u64))?;
+        reader.seek(std::io::SeekFrom::Start(u64::from(self.offset)))?;
         let mut v = vec![0; self.bytecode_size_in_bytes as usize];
         reader.read_exact(&mut v)?;
         reader.seek(std::io::SeekFrom::Start(previous_offset))?;
@@ -228,7 +228,7 @@ impl SmallFuncHeader {
         reader: &mut R,
     ) -> Result<FunctionHeader, std::io::Error> {
         let previous_offset = reader.stream_position()?;
-        let offset = ((self.info_offset() << 16) | self.offset()) as u64;
+        let offset = u64::from((self.info_offset() << 16) | self.offset());
         reader.seek(std::io::SeekFrom::Start(offset))?;
         let r = FunctionHeader::from_reader(reader);
         reader.seek(std::io::SeekFrom::Start(previous_offset))?;
@@ -243,7 +243,7 @@ impl SmallFuncHeader {
             return Ok(None);
         }
         let previous_offset = reader.stream_position()?;
-        reader.seek(std::io::SeekFrom::Start(self.offset() as u64))?;
+        reader.seek(std::io::SeekFrom::Start(u64::from(self.offset())))?;
         let mut v = vec![0; self.bytecode_size_in_bytes() as usize];
         reader.read_exact(&mut v)?;
         reader.seek(std::io::SeekFrom::Start(previous_offset))?;
@@ -305,7 +305,7 @@ impl From<u32> for StringKind {
 
 impl From<StringKind> for u32 {
     fn from(val: StringKind) -> Self {
-        val as u32
+        val as Self
     }
 }
 
@@ -356,6 +356,7 @@ pub struct BytecodeFile {
     pub function_source_table: Vec<(u32, u32)>,
 }
 
+#[allow(dead_code)]
 impl BytecodeFile {
     pub fn from_bytes(bytes: &[u8]) -> Self {
         let mut offset = 0;
@@ -365,10 +366,16 @@ impl BytecodeFile {
             BytecodeFileHeader::from_bytes(&bytes[offset..offset + size])
         };
         if header.magic != MAGIC {
-            println!("WARN: Incorrect MAGIC header found (expected: {}, got: {})", MAGIC, header.magic);
+            println!(
+                "WARN: Incorrect MAGIC header found (expected: {}, got: {})",
+                MAGIC, header.magic
+            );
         }
         if !SUPPORTED_VERSIONS.contains(&header.version) {
-            println!("WARN: Unsupported bytecode version found (got: {})", header.version);
+            println!(
+                "WARN: Unsupported bytecode version found (got: {})",
+                header.version
+            );
         }
         let function_headers = {
             let mut v = Vec::with_capacity(header.function_count as usize);
@@ -603,10 +610,16 @@ impl BytecodeFile {
             BytecodeFileHeader::from_reader(reader)
         };
         if header.magic != MAGIC {
-            println!("WARN: Incorrect MAGIC header found (expected: {}, got: {})", MAGIC, header.magic);
+            println!(
+                "WARN: Incorrect MAGIC header found (expected: {}, got: {})",
+                MAGIC, header.magic
+            );
         }
         if !SUPPORTED_VERSIONS.contains(&header.version) {
-            println!("WARN: Unsupported bytecode version found (got: {})", header.version);
+            println!(
+                "WARN: Unsupported bytecode version found (got: {})",
+                header.version
+            );
         }
         let function_headers = {
             let mut v = Vec::with_capacity(header.function_count as usize);
