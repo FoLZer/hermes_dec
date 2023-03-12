@@ -1,5 +1,6 @@
 #![feature(cursor_remaining)]
 
+use generate_ast::AstGenerator;
 use petgraph::stable_graph::NodeIndex;
 use std::env;
 use std::fs::File;
@@ -24,7 +25,6 @@ use swc_ecma_ast::Function;
 use swc_ecma_codegen::Emitter;
 
 use crate::bytecode::v93::Instruction;
-use crate::generate_ast::generate_ast;
 use crate::graphs::construct_cfg;
 use crate::graphs::construct_flow_graph;
 
@@ -227,7 +227,16 @@ fn disassemble_function<W: Write>(
             span: DUMMY_SP,
             body: Some(BlockStmt {
                 span: DUMMY_SP,
-                stmts: generate_ast(f, &cfg, &disassembled, NodeIndex::new(0), false, None, None),
+                stmts: AstGenerator::new(
+                    f,
+                    &cfg,
+                    &disassembled,
+                    NodeIndex::new(0),
+                    false,
+                    None,
+                    None,
+                )
+                .collect(),
             }),
             is_generator: false,
             is_async: false,

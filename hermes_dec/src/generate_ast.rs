@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use petgraph::{
     graph::EdgeReference,
     stable_graph::NodeIndex,
@@ -18,235 +20,320 @@ use crate::{
     hermes_file_reader::{BytecodeFile, InstructionInfo},
 };
 
-pub fn generate_ast(
-    f: &BytecodeFile,
-    cfg: &Graph<Vec<usize>, bool>,
-    instructions: &[InstructionInfo<Instruction>],
+enum AstGeneratorStage {
+    BeginProcessBlock,
+    LoopCheck,
+    IfCheck,
+    ProcessingDone,
+}
+
+pub struct AstGenerator<'a> {
+    stmt_queue: VecDeque<Stmt>,
+
+    f: &'a BytecodeFile,
+    cfg: &'a Graph<Vec<usize>, bool>,
+    instructions: &'a [InstructionInfo<Instruction>],
     node: NodeIndex,
     is_do_while_first_block: bool,
     while_cond_block: Option<NodeIndex>,
     do_while_cond_block: Option<NodeIndex>,
-) -> Vec<Stmt> {
-    let mut stmts = Vec::new();
 
-    if let Some(while_cond_block) = while_cond_block {
-        //this means that we got redirected through a jump back to a while loop condition
-        //we don't need to decompile anything at this point so we just return a "continue;"
-        if while_cond_block == node {
-            return vec![Stmt::Continue(ContinueStmt {
-                span: DUMMY_SP,
-                label: None,
-            })];
-        }
-    }
+    stage: AstGeneratorStage,
+}
 
-    stmts.append(&mut simple_instructions_to_ast(f, cfg, node, instructions));
-
-    if do_while_cond_block.is_some() && do_while_cond_block.unwrap() == node {
-        //we reached the end of a do..while loop statement so we just put decompiled statements in that block into stmts
-        //and then don't check for loops as it'll throw us in an infinite loop
-        return stmts;
-    }
-
-    let indecies = cfg.node_weight(node).unwrap();
-    let flow_index = indecies.last().unwrap();
-    let incoming_edges = cfg
-        .edges_directed(node, petgraph::Direction::Incoming)
-        .collect::<Vec<EdgeReference<'_, bool>>>();
-    let outgoing_edges = cfg
-        .edges_directed(node, petgraph::Direction::Outgoing)
-        .collect::<Vec<EdgeReference<'_, bool>>>();
-    if !is_do_while_first_block && incoming_edges.len() >= 2 {
-        //is_do_while_first_block -> prevent going into a loop
-        //either loop or "if target"
-        let edges_from = incoming_edges
-            .iter()
-            .map(|e| e.source())
-            .collect::<Vec<NodeIndex>>();
-        let mut dfs = DfsPostOrder::new(cfg, node);
-        {
-            let mut dfs_a = Dfs::new(cfg, NodeIndex::new(0));
-            dfs_a.discovered.visit(node);
-            while let Some(node) = dfs_a.next(cfg) {
-                dfs.discovered.visit(node);
-                dfs.finished.visit(node);
-            }
-        }
-
-        let mut is_loop = false;
-        let mut possible_loop_condition_index = None;
-        while let Some(node) = dfs.next(cfg) {
-            if edges_from.contains(&node) {
-                is_loop = true;
-                possible_loop_condition_index = Some(node);
-                break;
-            }
-        }
-
-        if is_loop {
-            let cond_index = cfg
-                .node_weight(possible_loop_condition_index.unwrap())
-                .unwrap()
-                .last()
-                .unwrap();
-            let mut skip_do_while_check = false;
-            if let Instruction::Jmp { .. } = &instructions[*cond_index].instruction {
-                skip_do_while_check = true; //can't be do_while if ends with jmp
-            }
-            let (index, loop_cond_index) = if skip_do_while_check {
-                (*flow_index, node)
-            } else {
-                (*cond_index, possible_loop_condition_index.unwrap())
-            };
-
-            let cond = jump_inst_to_test(&instructions[index].instruction);
-            let outgoing_edges = cfg
-                .edges_directed(loop_cond_index, petgraph::Direction::Outgoing)
-                .collect::<Vec<EdgeReference<'_, bool>>>();
-            let (tru, fals) = {
-                let mut tru = None;
-                let mut fals = None;
-                for edge in &outgoing_edges {
-                    if *edge.weight() {
-                        tru = Some(edge);
-                    } else {
-                        fals = Some(edge);
-                    }
-                }
-                (tru.unwrap(), fals.unwrap())
-            };
-            if tru.target() == node {
-                //do..while
-                let body = generate_ast(
-                    f,
-                    cfg,
-                    instructions,
-                    node,
-                    true,
-                    None,
-                    Some(possible_loop_condition_index.unwrap()),
-                );
-                if indecies.len() > 1 {
-                    //add_inside_while(&mut body, &stmts)
-                }
-                stmts.push(Stmt::DoWhile(DoWhileStmt {
-                    span: DUMMY_SP,
-                    test: Box::new(Expr::Paren(ParenExpr {
-                        span: DUMMY_SP,
-                        expr: Box::new(cond),
-                    })),
-                    body: Box::new(Stmt::Block(BlockStmt {
-                        span: DUMMY_SP,
-                        stmts: body,
-                    })),
-                }));
-                stmts.append(&mut generate_ast(
-                    f,
-                    cfg,
-                    instructions,
-                    fals.target(),
-                    false,
-                    None,
-                    None,
-                ));
-            } else {
-                //while..do
-                let mut body = generate_ast(
-                    f,
-                    cfg,
-                    instructions,
-                    fals.target(),
-                    false,
-                    Some(node),
-                    do_while_cond_block,
-                );
-                if indecies.len() > 1 {
-                    add_inside_while(&mut body, &stmts)
-                }
-                stmts.push(Stmt::While(WhileStmt {
-                    span: DUMMY_SP,
-                    test: Box::new(Expr::Unary(UnaryExpr {
-                        span: DUMMY_SP,
-                        op: UnaryOp::Bang,
-                        arg: Box::new(Expr::Paren(ParenExpr {
-                            span: DUMMY_SP,
-                            expr: Box::new(cond),
-                        })),
-                    })),
-                    body: Box::new(Stmt::Block(BlockStmt {
-                        span: DUMMY_SP,
-                        stmts: body,
-                    })),
-                }));
-                stmts.append(&mut generate_ast(
-                    f,
-                    cfg,
-                    instructions,
-                    tru.target(),
-                    false,
-                    None,
-                    do_while_cond_block,
-                ));
-            }
-
-            return stmts;
-        }
-    }
-    if outgoing_edges.len() == 2 {
-        //not sure about else if
-        //if, can't have more outgoing edges in hermes bytecode
-        let (tru, fals) = {
-            let mut tru = None;
-            let mut fals = None;
-            for edge in &outgoing_edges {
-                if *edge.weight() {
-                    tru = Some(edge);
-                } else {
-                    fals = Some(edge);
-                }
-            }
-            (tru.unwrap(), fals.unwrap())
-        };
-        stmts.push(Stmt::If(IfStmt {
-            span: DUMMY_SP,
-            test: Box::new(jump_inst_to_test(&instructions[*flow_index].instruction)),
-            cons: Box::new(Stmt::Block(BlockStmt {
-                span: DUMMY_SP,
-                stmts: generate_ast(
-                    f,
-                    cfg,
-                    instructions,
-                    tru.target(),
-                    false,
-                    while_cond_block,
-                    do_while_cond_block,
-                ),
-            })),
-            alt: Some(Box::new(Stmt::Block(BlockStmt {
-                span: DUMMY_SP,
-                stmts: generate_ast(
-                    f,
-                    cfg,
-                    instructions,
-                    fals.target(),
-                    false,
-                    while_cond_block,
-                    do_while_cond_block,
-                ),
-            }))),
-        }))
-    } else if outgoing_edges.len() == 1 {
-        stmts.append(&mut generate_ast(
+impl<'a> AstGenerator<'a> {
+    pub fn new(
+        f: &'a BytecodeFile,
+        cfg: &'a Graph<Vec<usize>, bool>,
+        instructions: &'a [InstructionInfo<Instruction>],
+        node: NodeIndex,
+        is_do_while_first_block: bool,
+        while_cond_block: Option<NodeIndex>,
+        do_while_cond_block: Option<NodeIndex>,
+    ) -> Self {
+        Self {
+            stmt_queue: VecDeque::new(),
             f,
             cfg,
             instructions,
-            outgoing_edges[0].target(),
-            false,
+            node,
+            is_do_while_first_block,
             while_cond_block,
             do_while_cond_block,
-        ));
+            stage: AstGeneratorStage::BeginProcessBlock,
+        }
     }
-    stmts
+
+    fn populate_next_stage(&mut self) -> bool {
+        match self.stage {
+            AstGeneratorStage::BeginProcessBlock => {
+                if let Some(while_cond_block) = self.while_cond_block {
+                    //this means that we got redirected through a jump back to a while loop condition
+                    //we don't need to decompile anything at this point so we just return a "continue;"
+                    if while_cond_block == self.node {
+                        self.stmt_queue.push_back(Stmt::Continue(ContinueStmt {
+                            span: DUMMY_SP,
+                            label: None,
+                        }));
+                        self.stage = AstGeneratorStage::ProcessingDone;
+                        return false;
+                    }
+                }
+
+                self.stmt_queue.append(
+                    &mut simple_instructions_to_ast(self.f, self.cfg, self.node, self.instructions)
+                        .into(),
+                );
+
+                if self.do_while_cond_block.is_some()
+                    && self.do_while_cond_block.unwrap() == self.node
+                {
+                    //we reached the end of a do..while loop statement so we just put decompiled statements in that block into stmts
+                    //and then don't check for loops as it'll throw us in an infinite loop
+                    self.stage = AstGeneratorStage::ProcessingDone;
+                    return false;
+                }
+                self.stage = AstGeneratorStage::LoopCheck;
+                true
+            }
+            AstGeneratorStage::LoopCheck => {
+                let indecies = self.cfg.node_weight(self.node).unwrap();
+                let flow_index = indecies.last().unwrap();
+                let incoming_edges = self
+                    .cfg
+                    .edges_directed(self.node, petgraph::Direction::Incoming)
+                    .collect::<Vec<EdgeReference<'_, bool>>>();
+                if !self.is_do_while_first_block && incoming_edges.len() >= 2 {
+                    //is_do_while_first_block -> prevent going into a loop
+                    //either loop or "if target"
+                    let edges_from = incoming_edges
+                        .iter()
+                        .map(|e| e.source())
+                        .collect::<Vec<NodeIndex>>();
+                    let mut dfs = DfsPostOrder::new(self.cfg, self.node);
+                    {
+                        let mut dfs_a = Dfs::new(self.cfg, NodeIndex::new(0));
+                        dfs_a.discovered.visit(self.node);
+                        while let Some(node) = dfs_a.next(self.cfg) {
+                            dfs.discovered.visit(node);
+                            dfs.finished.visit(node);
+                        }
+                    }
+
+                    let mut is_loop = false;
+                    let mut possible_loop_condition_index = None;
+                    while let Some(node) = dfs.next(self.cfg) {
+                        if edges_from.contains(&node) {
+                            is_loop = true;
+                            possible_loop_condition_index = Some(node);
+                            break;
+                        }
+                    }
+
+                    if is_loop {
+                        let cond_index = self
+                            .cfg
+                            .node_weight(possible_loop_condition_index.unwrap())
+                            .unwrap()
+                            .last()
+                            .unwrap();
+                        let mut skip_do_while_check = false;
+                        if let Instruction::Jmp { .. } = &self.instructions[*cond_index].instruction
+                        {
+                            skip_do_while_check = true; //can't be do_while if ends with jmp
+                        }
+                        let (index, loop_cond_index) = if skip_do_while_check {
+                            (*flow_index, self.node)
+                        } else {
+                            (*cond_index, possible_loop_condition_index.unwrap())
+                        };
+
+                        let cond = jump_inst_to_test(&self.instructions[index].instruction);
+                        let outgoing_edges = self
+                            .cfg
+                            .edges_directed(loop_cond_index, petgraph::Direction::Outgoing)
+                            .collect::<Vec<EdgeReference<'_, bool>>>();
+                        let (tru, fals) = {
+                            let mut tru = None;
+                            let mut fals = None;
+                            for edge in &outgoing_edges {
+                                if *edge.weight() {
+                                    tru = Some(edge);
+                                } else {
+                                    fals = Some(edge);
+                                }
+                            }
+                            (tru.unwrap(), fals.unwrap())
+                        };
+                        if tru.target() == self.node {
+                            //do..while
+                            let body = AstGenerator::new(
+                                self.f,
+                                self.cfg,
+                                self.instructions,
+                                self.node,
+                                true,
+                                None,
+                                Some(possible_loop_condition_index.unwrap()),
+                            )
+                            .collect::<Vec<Stmt>>();
+                            if indecies.len() > 1 {
+                                //add_inside_while(&mut body, &stmts)
+                            }
+                            self.stmt_queue.push_back(Stmt::DoWhile(DoWhileStmt {
+                                span: DUMMY_SP,
+                                test: Box::new(Expr::Paren(ParenExpr {
+                                    span: DUMMY_SP,
+                                    expr: Box::new(cond),
+                                })),
+                                body: Box::new(Stmt::Block(BlockStmt {
+                                    span: DUMMY_SP,
+                                    stmts: body,
+                                })),
+                            }));
+                            self.stmt_queue.extend(AstGenerator::new(
+                                self.f,
+                                self.cfg,
+                                self.instructions,
+                                fals.target(),
+                                false,
+                                None,
+                                None,
+                            ));
+                        } else {
+                            //while..do
+                            let mut body = AstGenerator::new(
+                                self.f,
+                                self.cfg,
+                                self.instructions,
+                                fals.target(),
+                                false,
+                                Some(self.node),
+                                self.do_while_cond_block,
+                            )
+                            .collect::<Vec<Stmt>>();
+                            if indecies.len() > 1 {
+                                add_inside_while(&mut body, &self.stmt_queue)
+                            }
+                            self.stmt_queue.push_back(Stmt::While(WhileStmt {
+                                span: DUMMY_SP,
+                                test: Box::new(Expr::Unary(UnaryExpr {
+                                    span: DUMMY_SP,
+                                    op: UnaryOp::Bang,
+                                    arg: Box::new(Expr::Paren(ParenExpr {
+                                        span: DUMMY_SP,
+                                        expr: Box::new(cond),
+                                    })),
+                                })),
+                                body: Box::new(Stmt::Block(BlockStmt {
+                                    span: DUMMY_SP,
+                                    stmts: body,
+                                })),
+                            }));
+                            self.stmt_queue.extend(AstGenerator::new(
+                                self.f,
+                                self.cfg,
+                                self.instructions,
+                                tru.target(),
+                                false,
+                                None,
+                                self.do_while_cond_block,
+                            ));
+                        }
+
+                        return true;
+                    }
+                }
+
+                self.stage = AstGeneratorStage::IfCheck;
+                true
+            }
+            AstGeneratorStage::IfCheck => {
+                let indecies = self.cfg.node_weight(self.node).unwrap();
+                let flow_index = indecies.last().unwrap();
+                let outgoing_edges = self
+                    .cfg
+                    .edges_directed(self.node, petgraph::Direction::Outgoing)
+                    .collect::<Vec<EdgeReference<'_, bool>>>();
+                if outgoing_edges.len() == 2 {
+                    //not sure about else if
+                    //if, can't have more outgoing edges in hermes bytecode
+                    let (tru, fals) = {
+                        let mut tru = None;
+                        let mut fals = None;
+                        for edge in &outgoing_edges {
+                            if *edge.weight() {
+                                tru = Some(edge);
+                            } else {
+                                fals = Some(edge);
+                            }
+                        }
+                        (tru.unwrap(), fals.unwrap())
+                    };
+                    self.stmt_queue.push_back(Stmt::If(IfStmt {
+                        span: DUMMY_SP,
+                        test: Box::new(jump_inst_to_test(
+                            &self.instructions[*flow_index].instruction,
+                        )),
+                        cons: Box::new(Stmt::Block(BlockStmt {
+                            span: DUMMY_SP,
+                            stmts: AstGenerator::new(
+                                self.f,
+                                self.cfg,
+                                self.instructions,
+                                tru.target(),
+                                false,
+                                self.while_cond_block,
+                                self.do_while_cond_block,
+                            )
+                            .collect(),
+                        })),
+                        alt: Some(Box::new(Stmt::Block(BlockStmt {
+                            span: DUMMY_SP,
+                            stmts: AstGenerator::new(
+                                self.f,
+                                self.cfg,
+                                self.instructions,
+                                fals.target(),
+                                false,
+                                self.while_cond_block,
+                                self.do_while_cond_block,
+                            )
+                            .collect(),
+                        }))),
+                    }))
+                } else if outgoing_edges.len() == 1 {
+                    self.stmt_queue.extend(AstGenerator::new(
+                        self.f,
+                        self.cfg,
+                        self.instructions,
+                        outgoing_edges[0].target(),
+                        false,
+                        self.while_cond_block,
+                        self.do_while_cond_block,
+                    ));
+                }
+
+                self.stage = AstGeneratorStage::ProcessingDone;
+                true
+            }
+            AstGeneratorStage::ProcessingDone => false,
+        }
+    }
+}
+
+impl Iterator for AstGenerator<'_> {
+    type Item = Stmt;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(item) = self.stmt_queue.pop_front() {
+            Some(item)
+        } else if self.populate_next_stage() {
+            self.next()
+        } else {
+            None
+        }
+    }
 }
 
 fn jump_inst_to_test(instruction: &Instruction) -> Expr {
@@ -1206,7 +1293,7 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
     }
 }
 
-fn add_inside_while(body: &mut Vec<Stmt>, to_add: &Vec<Stmt>) {
+fn add_inside_while(body: &mut Vec<Stmt>, to_add: &VecDeque<Stmt>) {
     let mut i = 0;
     //println!("{}", body.len());
     while i < body.len() {
