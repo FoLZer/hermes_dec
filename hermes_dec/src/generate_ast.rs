@@ -86,16 +86,16 @@ pub fn generate_ast(
             if let Instruction::Jmp { .. } = &instructions[*cond_index].instruction {
                 skip_do_while_check = true; //can't be do_while if ends with jmp
             }
-            let index = if skip_do_while_check {
-                *flow_index
+            let (index, loop_cond_index) = if skip_do_while_check {
+                (*flow_index, node)
             } else {
-                *cond_index
+                (*cond_index, possible_loop_condition_index.unwrap())
             };
 
             let cond = jump_inst_to_test(&instructions[index].instruction);
             let outgoing_edges = cfg
                 .edges_directed(
-                    possible_loop_condition_index.unwrap(),
+                    loop_cond_index,
                     petgraph::Direction::Outgoing,
                 )
                 .collect::<Vec<EdgeReference<'_, bool>>>();
