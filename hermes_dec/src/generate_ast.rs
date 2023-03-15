@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use petgraph::{
     graph::EdgeReference,
     stable_graph::NodeIndex,
-    visit::{Dfs, DfsPostOrder, EdgeRef, VisitMap, Bfs},
+    visit::{Bfs, Dfs, DfsPostOrder, EdgeRef, VisitMap},
     Graph,
 };
 use swc_common::DUMMY_SP;
@@ -44,7 +44,7 @@ pub struct AstGenerator<'a> {
 
     chained_iterator: Option<Box<AstGenerator<'a>>>,
 
-    is_last_instruction_return: bool
+    is_last_instruction_return: bool,
 }
 
 impl<'a> AstGenerator<'a> {
@@ -70,7 +70,7 @@ impl<'a> AstGenerator<'a> {
             stage: AstGeneratorStage::BeginProcessBlock,
             chained_iterator: None,
 
-            is_last_instruction_return: false
+            is_last_instruction_return: false,
         }
     }
 
@@ -304,7 +304,7 @@ impl<'a> AstGenerator<'a> {
                             }
                         }
                     }
-                    
+
                     if skip_else_false {
                         self.stmt_queue.push_back(Stmt::If(IfStmt {
                             span: DUMMY_SP,
@@ -331,15 +331,16 @@ impl<'a> AstGenerator<'a> {
                     } else if skip_else_true {
                         self.stmt_queue.push_back(Stmt::If(IfStmt {
                             span: DUMMY_SP,
-                            test: Box::new(Expr::Unary(UnaryExpr { //revert the if condition
+                            test: Box::new(Expr::Unary(UnaryExpr {
+                                //revert the if condition
                                 span: DUMMY_SP,
                                 op: UnaryOp::Bang,
                                 arg: Box::new(Expr::Paren(ParenExpr {
                                     span: DUMMY_SP,
                                     expr: Box::new(jump_inst_to_test(
                                         &self.instructions[*flow_index].instruction,
-                                    ))
-                                }))
+                                    )),
+                                })),
                             })),
                             cons: Box::new(Stmt::Block(BlockStmt {
                                 span: DUMMY_SP,
@@ -415,7 +416,7 @@ impl<'a> AstGenerator<'a> {
                                 }))),
                             }));
                         }
-                        
+
                         self.stage = AstGeneratorStage::ProcessingDone;
                     }
                 } else if outgoing_edges.len() == 1 {
@@ -466,7 +467,7 @@ impl Iterator for AstGenerator<'_> {
                 Stmt::Throw(_) => {
                     self.is_last_instruction_return = true;
                 }
-                _ => ()
+                _ => (),
             }
             Some(item)
         } else if self.populate_next_stage() {
@@ -617,18 +618,21 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
             return Expr::Unary(UnaryExpr {
                 span: DUMMY_SP,
                 op: UnaryOp::Bang,
-                arg: Box::new(Expr::Bin(BinExpr {
+                arg: Box::new(Expr::Paren(ParenExpr {
                     span: DUMMY_SP,
-                    op: BinaryOp::Lt,
-                    left: Box::new(Expr::Ident(Ident {
+                    expr: Box::new(Expr::Bin(BinExpr {
                         span: DUMMY_SP,
-                        sym: format!("r{arg1_value_reg}").as_str().into(),
-                        optional: false,
-                    })),
-                    right: Box::new(Expr::Ident(Ident {
-                        span: DUMMY_SP,
-                        sym: format!("r{arg2_value_reg}").as_str().into(),
-                        optional: false,
+                        op: BinaryOp::Lt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
                     })),
                 })),
             })
@@ -641,18 +645,21 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
             return Expr::Unary(UnaryExpr {
                 span: DUMMY_SP,
                 op: UnaryOp::Bang,
-                arg: Box::new(Expr::Bin(BinExpr {
+                arg: Box::new(Expr::Paren(ParenExpr {
                     span: DUMMY_SP,
-                    op: BinaryOp::Lt,
-                    left: Box::new(Expr::Ident(Ident {
+                    expr: Box::new(Expr::Bin(BinExpr {
                         span: DUMMY_SP,
-                        sym: format!("r{arg1_value_reg}").as_str().into(),
-                        optional: false,
-                    })),
-                    right: Box::new(Expr::Ident(Ident {
-                        span: DUMMY_SP,
-                        sym: format!("r{arg2_value_reg}").as_str().into(),
-                        optional: false,
+                        op: BinaryOp::Lt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
                     })),
                 })),
             })
@@ -705,18 +712,21 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
             return Expr::Unary(UnaryExpr {
                 span: DUMMY_SP,
                 op: UnaryOp::Bang,
-                arg: Box::new(Expr::Bin(BinExpr {
+                arg: Box::new(Expr::Paren(ParenExpr {
                     span: DUMMY_SP,
-                    op: BinaryOp::Lt,
-                    left: Box::new(Expr::Ident(Ident {
+                    expr: Box::new(Expr::Bin(BinExpr {
                         span: DUMMY_SP,
-                        sym: format!("r{arg1_value_reg}").as_str().into(),
-                        optional: false,
-                    })),
-                    right: Box::new(Expr::Ident(Ident {
-                        span: DUMMY_SP,
-                        sym: format!("r{arg2_value_reg}").as_str().into(),
-                        optional: false,
+                        op: BinaryOp::Lt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
                     })),
                 })),
             })
@@ -729,18 +739,21 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
             return Expr::Unary(UnaryExpr {
                 span: DUMMY_SP,
                 op: UnaryOp::Bang,
-                arg: Box::new(Expr::Bin(BinExpr {
+                arg: Box::new(Expr::Paren(ParenExpr {
                     span: DUMMY_SP,
-                    op: BinaryOp::Lt,
-                    left: Box::new(Expr::Ident(Ident {
+                    expr: Box::new(Expr::Bin(BinExpr {
                         span: DUMMY_SP,
-                        sym: format!("r{arg1_value_reg}").as_str().into(),
-                        optional: false,
-                    })),
-                    right: Box::new(Expr::Ident(Ident {
-                        span: DUMMY_SP,
-                        sym: format!("r{arg2_value_reg}").as_str().into(),
-                        optional: false,
+                        op: BinaryOp::Lt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
                     })),
                 })),
             })
@@ -793,18 +806,21 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
             return Expr::Unary(UnaryExpr {
                 span: DUMMY_SP,
                 op: UnaryOp::Bang,
-                arg: Box::new(Expr::Bin(BinExpr {
+                arg: Box::new(Expr::Paren(ParenExpr {
                     span: DUMMY_SP,
-                    op: BinaryOp::LtEq,
-                    left: Box::new(Expr::Ident(Ident {
+                    expr: Box::new(Expr::Bin(BinExpr {
                         span: DUMMY_SP,
-                        sym: format!("r{arg1_value_reg}").as_str().into(),
-                        optional: false,
-                    })),
-                    right: Box::new(Expr::Ident(Ident {
-                        span: DUMMY_SP,
-                        sym: format!("r{arg2_value_reg}").as_str().into(),
-                        optional: false,
+                        op: BinaryOp::LtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
                     })),
                 })),
             })
@@ -817,18 +833,21 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
             return Expr::Unary(UnaryExpr {
                 span: DUMMY_SP,
                 op: UnaryOp::Bang,
-                arg: Box::new(Expr::Bin(BinExpr {
+                arg: Box::new(Expr::Paren(ParenExpr {
                     span: DUMMY_SP,
-                    op: BinaryOp::LtEq,
-                    left: Box::new(Expr::Ident(Ident {
+                    expr: Box::new(Expr::Bin(BinExpr {
                         span: DUMMY_SP,
-                        sym: format!("r{arg1_value_reg}").as_str().into(),
-                        optional: false,
-                    })),
-                    right: Box::new(Expr::Ident(Ident {
-                        span: DUMMY_SP,
-                        sym: format!("r{arg2_value_reg}").as_str().into(),
-                        optional: false,
+                        op: BinaryOp::LtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
                     })),
                 })),
             })
@@ -881,18 +900,21 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
             return Expr::Unary(UnaryExpr {
                 span: DUMMY_SP,
                 op: UnaryOp::Bang,
-                arg: Box::new(Expr::Bin(BinExpr {
+                arg: Box::new(Expr::Paren(ParenExpr {
                     span: DUMMY_SP,
-                    op: BinaryOp::LtEq,
-                    left: Box::new(Expr::Ident(Ident {
+                    expr: Box::new(Expr::Bin(BinExpr {
                         span: DUMMY_SP,
-                        sym: format!("r{arg1_value_reg}").as_str().into(),
-                        optional: false,
-                    })),
-                    right: Box::new(Expr::Ident(Ident {
-                        span: DUMMY_SP,
-                        sym: format!("r{arg2_value_reg}").as_str().into(),
-                        optional: false,
+                        op: BinaryOp::LtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
                     })),
                 })),
             })
@@ -905,18 +927,21 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
             return Expr::Unary(UnaryExpr {
                 span: DUMMY_SP,
                 op: UnaryOp::Bang,
-                arg: Box::new(Expr::Bin(BinExpr {
+                arg: Box::new(Expr::Paren(ParenExpr {
                     span: DUMMY_SP,
-                    op: BinaryOp::LtEq,
-                    left: Box::new(Expr::Ident(Ident {
+                    expr: Box::new(Expr::Bin(BinExpr {
                         span: DUMMY_SP,
-                        sym: format!("r{arg1_value_reg}").as_str().into(),
-                        optional: false,
-                    })),
-                    right: Box::new(Expr::Ident(Ident {
-                        span: DUMMY_SP,
-                        sym: format!("r{arg2_value_reg}").as_str().into(),
-                        optional: false,
+                        op: BinaryOp::LtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
                     })),
                 })),
             })
@@ -969,18 +994,21 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
             return Expr::Unary(UnaryExpr {
                 span: DUMMY_SP,
                 op: UnaryOp::Bang,
-                arg: Box::new(Expr::Bin(BinExpr {
+                arg: Box::new(Expr::Paren(ParenExpr {
                     span: DUMMY_SP,
-                    op: BinaryOp::Gt,
-                    left: Box::new(Expr::Ident(Ident {
+                    expr: Box::new(Expr::Bin(BinExpr {
                         span: DUMMY_SP,
-                        sym: format!("r{arg1_value_reg}").as_str().into(),
-                        optional: false,
-                    })),
-                    right: Box::new(Expr::Ident(Ident {
-                        span: DUMMY_SP,
-                        sym: format!("r{arg2_value_reg}").as_str().into(),
-                        optional: false,
+                        op: BinaryOp::Gt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
                     })),
                 })),
             })
@@ -993,18 +1021,21 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
             return Expr::Unary(UnaryExpr {
                 span: DUMMY_SP,
                 op: UnaryOp::Bang,
-                arg: Box::new(Expr::Bin(BinExpr {
+                arg: Box::new(Expr::Paren(ParenExpr {
                     span: DUMMY_SP,
-                    op: BinaryOp::Gt,
-                    left: Box::new(Expr::Ident(Ident {
+                    expr: Box::new(Expr::Bin(BinExpr {
                         span: DUMMY_SP,
-                        sym: format!("r{arg1_value_reg}").as_str().into(),
-                        optional: false,
-                    })),
-                    right: Box::new(Expr::Ident(Ident {
-                        span: DUMMY_SP,
-                        sym: format!("r{arg2_value_reg}").as_str().into(),
-                        optional: false,
+                        op: BinaryOp::Gt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
                     })),
                 })),
             })
@@ -1057,18 +1088,21 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
             return Expr::Unary(UnaryExpr {
                 span: DUMMY_SP,
                 op: UnaryOp::Bang,
-                arg: Box::new(Expr::Bin(BinExpr {
+                arg: Box::new(Expr::Paren(ParenExpr {
                     span: DUMMY_SP,
-                    op: BinaryOp::Gt,
-                    left: Box::new(Expr::Ident(Ident {
+                    expr: Box::new(Expr::Bin(BinExpr {
                         span: DUMMY_SP,
-                        sym: format!("r{arg1_value_reg}").as_str().into(),
-                        optional: false,
-                    })),
-                    right: Box::new(Expr::Ident(Ident {
-                        span: DUMMY_SP,
-                        sym: format!("r{arg2_value_reg}").as_str().into(),
-                        optional: false,
+                        op: BinaryOp::Gt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
                     })),
                 })),
             })
@@ -1081,18 +1115,21 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
             return Expr::Unary(UnaryExpr {
                 span: DUMMY_SP,
                 op: UnaryOp::Bang,
-                arg: Box::new(Expr::Bin(BinExpr {
+                arg: Box::new(Expr::Paren(ParenExpr {
                     span: DUMMY_SP,
-                    op: BinaryOp::Gt,
-                    left: Box::new(Expr::Ident(Ident {
+                    expr: Box::new(Expr::Bin(BinExpr {
                         span: DUMMY_SP,
-                        sym: format!("r{arg1_value_reg}").as_str().into(),
-                        optional: false,
-                    })),
-                    right: Box::new(Expr::Ident(Ident {
-                        span: DUMMY_SP,
-                        sym: format!("r{arg2_value_reg}").as_str().into(),
-                        optional: false,
+                        op: BinaryOp::Gt,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
                     })),
                 })),
             })
@@ -1145,18 +1182,21 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
             return Expr::Unary(UnaryExpr {
                 span: DUMMY_SP,
                 op: UnaryOp::Bang,
-                arg: Box::new(Expr::Bin(BinExpr {
+                arg: Box::new(Expr::Paren(ParenExpr {
                     span: DUMMY_SP,
-                    op: BinaryOp::GtEq,
-                    left: Box::new(Expr::Ident(Ident {
+                    expr: Box::new(Expr::Bin(BinExpr {
                         span: DUMMY_SP,
-                        sym: format!("r{arg1_value_reg}").as_str().into(),
-                        optional: false,
-                    })),
-                    right: Box::new(Expr::Ident(Ident {
-                        span: DUMMY_SP,
-                        sym: format!("r{arg2_value_reg}").as_str().into(),
-                        optional: false,
+                        op: BinaryOp::GtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
                     })),
                 })),
             })
@@ -1169,18 +1209,21 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
             return Expr::Unary(UnaryExpr {
                 span: DUMMY_SP,
                 op: UnaryOp::Bang,
-                arg: Box::new(Expr::Bin(BinExpr {
+                arg: Box::new(Expr::Paren(ParenExpr {
                     span: DUMMY_SP,
-                    op: BinaryOp::GtEq,
-                    left: Box::new(Expr::Ident(Ident {
+                    expr: Box::new(Expr::Bin(BinExpr {
                         span: DUMMY_SP,
-                        sym: format!("r{arg1_value_reg}").as_str().into(),
-                        optional: false,
-                    })),
-                    right: Box::new(Expr::Ident(Ident {
-                        span: DUMMY_SP,
-                        sym: format!("r{arg2_value_reg}").as_str().into(),
-                        optional: false,
+                        op: BinaryOp::GtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
                     })),
                 })),
             })
@@ -1233,18 +1276,21 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
             return Expr::Unary(UnaryExpr {
                 span: DUMMY_SP,
                 op: UnaryOp::Bang,
-                arg: Box::new(Expr::Bin(BinExpr {
+                arg: Box::new(Expr::Paren(ParenExpr {
                     span: DUMMY_SP,
-                    op: BinaryOp::GtEq,
-                    left: Box::new(Expr::Ident(Ident {
+                    expr: Box::new(Expr::Bin(BinExpr {
                         span: DUMMY_SP,
-                        sym: format!("r{arg1_value_reg}").as_str().into(),
-                        optional: false,
-                    })),
-                    right: Box::new(Expr::Ident(Ident {
-                        span: DUMMY_SP,
-                        sym: format!("r{arg2_value_reg}").as_str().into(),
-                        optional: false,
+                        op: BinaryOp::GtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
                     })),
                 })),
             })
@@ -1257,18 +1303,21 @@ fn jump_inst_to_test(instruction: &Instruction) -> Expr {
             return Expr::Unary(UnaryExpr {
                 span: DUMMY_SP,
                 op: UnaryOp::Bang,
-                arg: Box::new(Expr::Bin(BinExpr {
+                arg: Box::new(Expr::Paren(ParenExpr {
                     span: DUMMY_SP,
-                    op: BinaryOp::GtEq,
-                    left: Box::new(Expr::Ident(Ident {
+                    expr: Box::new(Expr::Bin(BinExpr {
                         span: DUMMY_SP,
-                        sym: format!("r{arg1_value_reg}").as_str().into(),
-                        optional: false,
-                    })),
-                    right: Box::new(Expr::Ident(Ident {
-                        span: DUMMY_SP,
-                        sym: format!("r{arg2_value_reg}").as_str().into(),
-                        optional: false,
+                        op: BinaryOp::GtEq,
+                        left: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg1_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
+                        right: Box::new(Expr::Ident(Ident {
+                            span: DUMMY_SP,
+                            sym: format!("r{arg2_value_reg}").as_str().into(),
+                            optional: false,
+                        })),
                     })),
                 })),
             })
