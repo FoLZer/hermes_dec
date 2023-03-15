@@ -1194,6 +1194,7 @@ pub fn construct_flow_graph(
                 }
             }
             Instruction::Ret { value_reg: _ } => {}
+            Instruction::Throw { value_reg: _ } => {}
             _ => {
                 if instruction_index < instructions.len() - 1 {
                     flow_graph.add_edge(

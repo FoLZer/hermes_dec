@@ -42,7 +42,9 @@ pub struct AstGenerator<'a> {
     after_if_node: Option<NodeIndex>,
     stage: AstGeneratorStage,
 
-    chained_iterator: Option<Box<AstGenerator<'a>>>
+    chained_iterator: Option<Box<AstGenerator<'a>>>,
+
+    is_last_instruction_return: bool
 }
 
 impl<'a> AstGenerator<'a> {
@@ -66,7 +68,9 @@ impl<'a> AstGenerator<'a> {
             do_while_cond_block,
             after_if_node: None,
             stage: AstGeneratorStage::BeginProcessBlock,
-            chained_iterator: None
+            chained_iterator: None,
+
+            is_last_instruction_return: false
         }
     }
 
@@ -355,38 +359,63 @@ impl<'a> AstGenerator<'a> {
                         self.after_if_node = Some(tru.target());
                         self.stage = AstGeneratorStage::AfterIf;
                     } else {
-                        self.stmt_queue.push_back(Stmt::If(IfStmt {
-                            span: DUMMY_SP,
-                            test: Box::new(jump_inst_to_test(
-                                &self.instructions[*flow_index].instruction,
-                            )),
-                            cons: Box::new(Stmt::Block(BlockStmt {
+                        let mut cons_gen = AstGenerator::new(
+                            self.f,
+                            self.cfg,
+                            self.instructions,
+                            tru.target(),
+                            false,
+                            self.while_cond_block,
+                            self.do_while_cond_block,
+                        );
+                        let cons_stmts = (&mut cons_gen).collect();
+                        if cons_gen.is_last_instruction_return {
+                            self.stmt_queue.push_back(Stmt::If(IfStmt {
                                 span: DUMMY_SP,
-                                stmts: AstGenerator::new(
-                                    self.f,
-                                    self.cfg,
-                                    self.instructions,
-                                    tru.target(),
-                                    false,
-                                    self.while_cond_block,
-                                    self.do_while_cond_block,
-                                )
-                                .collect(),
-                            })),
-                            alt: Some(Box::new(Stmt::Block(BlockStmt {
+                                test: Box::new(jump_inst_to_test(
+                                    &self.instructions[*flow_index].instruction,
+                                )),
+                                cons: Box::new(Stmt::Block(BlockStmt {
+                                    span: DUMMY_SP,
+                                    stmts: cons_stmts,
+                                })),
+                                alt: None,
+                            }));
+                            self.chained_iterator = Some(Box::new(AstGenerator::new(
+                                self.f,
+                                self.cfg,
+                                self.instructions,
+                                fals.target(),
+                                false,
+                                self.while_cond_block,
+                                self.do_while_cond_block,
+                            )));
+                        } else {
+                            self.stmt_queue.push_back(Stmt::If(IfStmt {
                                 span: DUMMY_SP,
-                                stmts: AstGenerator::new(
-                                    self.f,
-                                    self.cfg,
-                                    self.instructions,
-                                    fals.target(),
-                                    false,
-                                    self.while_cond_block,
-                                    self.do_while_cond_block,
-                                )
-                                .collect(),
-                            }))),
-                        }));
+                                test: Box::new(jump_inst_to_test(
+                                    &self.instructions[*flow_index].instruction,
+                                )),
+                                cons: Box::new(Stmt::Block(BlockStmt {
+                                    span: DUMMY_SP,
+                                    stmts: cons_stmts,
+                                })),
+                                alt: Some(Box::new(Stmt::Block(BlockStmt {
+                                    span: DUMMY_SP,
+                                    stmts: AstGenerator::new(
+                                        self.f,
+                                        self.cfg,
+                                        self.instructions,
+                                        fals.target(),
+                                        false,
+                                        self.while_cond_block,
+                                        self.do_while_cond_block,
+                                    )
+                                    .collect(),
+                                }))),
+                            }));
+                        }
+                        
                         self.stage = AstGeneratorStage::ProcessingDone;
                     }
                 } else if outgoing_edges.len() == 1 {
@@ -430,11 +459,21 @@ impl Iterator for AstGenerator<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(item) = self.stmt_queue.pop_front() {
+            match item {
+                Stmt::Return(_) => {
+                    self.is_last_instruction_return = true;
+                }
+                Stmt::Throw(_) => {
+                    self.is_last_instruction_return = true;
+                }
+                _ => ()
+            }
             Some(item)
         } else if self.populate_next_stage() {
             self.next()
-        } else if let Some(chained) = &mut self.chained_iterator {
-            chained.next()
+        } else if let Some(_) = &mut self.chained_iterator {
+            *self = *self.chained_iterator.take().unwrap();
+            self.next()
         } else {
             None
         }
