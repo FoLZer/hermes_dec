@@ -1,6 +1,6 @@
 use std::{
     io::{Cursor, Read, Seek},
-    os::raw::c_char,
+    os::raw::c_char, collections::HashMap,
 };
 
 use bitfield_struct::bitfield;
@@ -147,6 +147,14 @@ enum FunctionHeaderFlag {
 
 #[repr(C)]
 #[derive(FromBytes, Clone, Copy, Debug)]
+pub struct ExceptionHandlerInfo {
+    start: u32,
+    end: u32,
+    target: u32
+}
+
+#[repr(C)]
+#[derive(FromBytes, Clone, Copy, Debug)]
 pub struct FunctionHeader {
     offset: u32,
     param_count: u32,
@@ -166,11 +174,11 @@ pub struct FunctionHeader {
 
 impl FunctionHeader {
     pub fn read_bytecode<R: Seek + Read>(&self, reader: &mut R) -> Result<Vec<u8>, std::io::Error> {
-        let previous_offset = reader.stream_position()?;
+        //let previous_offset = reader.stream_position()?;
         reader.seek(std::io::SeekFrom::Start(u64::from(self.offset)))?;
         let mut v = vec![0; self.bytecode_size_in_bytes as usize];
         reader.read_exact(&mut v)?;
-        reader.seek(std::io::SeekFrom::Start(previous_offset))?;
+        //reader.seek(std::io::SeekFrom::Start(previous_offset))?;
         Ok(v)
     }
 
@@ -191,6 +199,19 @@ impl FunctionHeader {
             });
         }
         Ok(instructions)
+    }
+
+    pub fn read_exception_handlers<R: Seek + Read>(&self, reader: &mut R) -> Result<Option<Vec<ExceptionHandlerInfo>>, std::io::Error> {
+        if !self.flags.has_exception_handler() {
+            return Ok(None);
+        }
+        reader.seek(std::io::SeekFrom::Start(self.info_offset as u64))?;
+        let count = reader.read_u32::<LittleEndian>()?;
+        let mut v = Vec::new();
+        for _ in 0..count {
+            v.push(ExceptionHandlerInfo::from_reader(reader))
+        }
+        return Ok(Some(v));
     }
 }
 
@@ -271,6 +292,19 @@ impl SmallFuncHeader {
             }
             Ok(instructions)
         }
+    }
+
+    pub fn read_exception_handlers<R: Seek + Read>(&self, reader: &mut R) -> Result<Option<Vec<ExceptionHandlerInfo>>, std::io::Error> {
+        if !self.flags().has_exception_handler() {
+            return Ok(None);
+        }
+        reader.seek(std::io::SeekFrom::Start(self.info_offset() as u64))?;
+        let count = reader.read_u32::<LittleEndian>()?;
+        let mut v = Vec::new();
+        for _ in 0..count {
+            v.push(ExceptionHandlerInfo::from_reader(reader))
+        }
+        return Ok(Some(v));
     }
 }
 
@@ -354,6 +388,8 @@ pub struct BytecodeFile {
     pub cjs_module_table: Option<Vec<(u32, u32)>>,
     pub cjs_module_table_static: Option<Vec<(u32, u32)>>,
     pub function_source_table: Vec<(u32, u32)>,
+
+    pub exception_handler_map: HashMap<usize, Vec<ExceptionHandlerInfo>>
 }
 
 #[allow(dead_code)]
@@ -582,6 +618,15 @@ impl BytecodeFile {
             }
             v
         };
+        let exception_handler_map = {
+            let mut map = HashMap::new();
+            for i in 0..function_headers.len() {
+                if let Some(handlers) = function_headers[i].read_exception_handlers(&mut Cursor::new(bytes)).unwrap() {
+                    map.insert(i, handlers);
+                }
+            }
+            map
+        };
         Self {
             header,
             function_headers,
@@ -600,10 +645,12 @@ impl BytecodeFile {
             cjs_module_table,
             cjs_module_table_static,
             function_source_table,
+
+            exception_handler_map
         }
     }
 
-    pub fn from_reader<T: Read>(reader: &mut T) -> Result<Self, std::io::Error> {
+    pub fn from_reader<T: Read + Seek>(reader: &mut T) -> Result<Self, std::io::Error> {
         let header = {
             let _size = std::mem::size_of::<BytecodeFileHeader>();
 
@@ -767,6 +814,15 @@ impl BytecodeFile {
             }
             v
         };
+        let exception_handler_map = {
+            let mut map = HashMap::new();
+            for i in 0..function_headers.len() {
+                if let Some(handlers) = function_headers[i].read_exception_handlers(reader).unwrap() {
+                    map.insert(i, handlers);
+                }
+            }
+            map
+        };
         Ok(Self {
             header,
             function_headers,
@@ -785,6 +841,8 @@ impl BytecodeFile {
             cjs_module_table,
             cjs_module_table_static,
             function_source_table,
+
+            exception_handler_map
         })
     }
 
