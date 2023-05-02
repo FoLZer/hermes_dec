@@ -52,7 +52,7 @@ impl<'a> AstGenerator<'a> {
         f: &'a BytecodeFile,
         cfg: &'a Graph<Vec<usize>, bool>,
         instructions: &'a [InstructionInfo<Instruction>],
-        node: NodeIndex,
+        node: NodeIndex, //if this isn't correct cfg node - this is an error
         is_do_while_first_block: bool,
         while_cond_block: Option<NodeIndex>,
         do_while_cond_block: Option<NodeIndex>,
